@@ -36,9 +36,11 @@ object Prefs {
     fun panelY(): Int = sp.getInt("panel_y", -1)
     fun setPanelPos(x: Int, y: Int) = sp.edit().putInt("panel_x", x).putInt("panel_y", y).apply()
 
-    // 当前整理使用的模板集：user / dev
-    fun activeTemplateSet(): String = sp.getString("active_tpl_set", "user") ?: "user"
-    fun setActiveTemplateSet(v: String) = sp.edit().putString("active_tpl_set", v).apply()
+    // 手动勾选用于本次整理的模板 label 集合（从全部用户+开发者模板中多选）
+    fun activeTemplateIds(): MutableSet<String> =
+        HashSet(sp.getStringSet("active_tpl_ids", null) ?: emptySet())
+    fun setActiveTemplateIds(s: Set<String>) =
+        sp.edit().putStringSet("active_tpl_ids", s.toSet()).apply()
 
     fun githubToken(): String = sp.getString("github_token", "") ?: ""
     fun setGithubToken(v: String) = sp.edit().putString("github_token", v).apply()

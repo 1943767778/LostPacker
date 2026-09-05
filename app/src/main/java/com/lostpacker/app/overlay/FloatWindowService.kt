@@ -58,6 +58,10 @@ class FloatWindowService : Service() {
     private var organizeBtn: TextView? = null
     private var organizing = false
 
+    // 持久化：日志/状态跨 Tab 重建不丢
+    private val logBuffer = StringBuilder()
+    private var lastStatus = "就绪"
+
     private var dragDX = 0f
     private var dragDY = 0f
     private var dialogInput: EditText? = null
@@ -73,6 +77,7 @@ class FloatWindowService : Service() {
         Prefs.init(this)
         templateRepo = TemplateRepository(this)
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        seedUsageLog()
         startForegroundCompat()
         showBubble()
         startTicker()
@@ -183,7 +188,7 @@ class FloatWindowService : Service() {
         selectTab(currentTab)
 
         panelParams = WindowManager.LayoutParams(
-            ThemeConfig.dp(316).toInt(), ThemeConfig.dp(430).toInt(), overlayType,
+            ThemeConfig.dp(306).toInt(), ThemeConfig.dp(320).toInt(), overlayType,
             FLAG_NOT_FOCUSABLE or FLAG_NOT_TOUCH_MODAL or FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START; x = prefPanelX(); y = prefPanelY() }
     }
@@ -275,15 +280,21 @@ class FloatWindowService : Service() {
     // ============ 各 Tab ============
     private fun tabInfo(l: LinearLayout) {
         pillTitle(l, "ℹ 信息")
-        statusTv = TextView(this).apply { text = "就绪"; textSize = 13f; setTextColor(ThemeConfig.pal().textMain) }.also { l.addView(it) }
+        statusTv = TextView(this).apply { text = lastStatus; textSize = 13f; setTextColor(ThemeConfig.pal().textMain) }.also { l.addView(it) }
         permTv = TextView(this).apply { textSize = 12f; setTextColor(ThemeConfig.pal().textSub) }.also { l.addView(it) }
         updatePermLine()
-        l.addView(makeBtn("查看使用说明", false) {
-            setStatus("使用：整理页选模板→框选背包区域→开始整理；识别/工具页可截图加图标。")
-            if (permTv != null) updatePermLine()
-        })
         pillTitle(l, "📋 运行日志")
-        logTv = TextView(this).apply { text = ""; textSize = 11f; typeface = android.graphics.Typeface.MONOSPACE; setTextColor(ThemeConfig.pal().textSub) }.also { l.addView(it) }
+        logTv = TextView(this).apply { text = logBuffer.toString(); textSize = 11f; typeface = android.graphics.Typeface.MONOSPACE; setTextColor(ThemeConfig.pal().textSub) }.also { l.addView(it) }
+    }
+
+    /** 首次运行时把使用说明写进日志（日志持久化，切换 Tab/整理时不清空） */
+    private fun seedUsageLog() {
+        if (logBuffer.isNotEmpty()) return
+        logBuffer.append("【使用说明】\n")
+        logBuffer.append("1. 整理页：勾选要整理的目标图标（可多选，来自全部模板）→ 框选识别区域 → 开始整理。\n")
+        logBuffer.append("2. 模板页：截图→框选保存为用户模板（整理时勾选可用）。\n")
+        logBuffer.append("3. 工具页：截图→框选收集为开发者素材，可命名导出。\n")
+        logBuffer.append("4. 拖动标题栏可移动悬浮窗位置。\n\n")
     }
 
     private fun updatePermLine() {
@@ -292,17 +303,37 @@ class FloatWindowService : Service() {
 
     private fun tabOrganize(l: LinearLayout) {
         pillTitle(l, "🧹 自动整理")
-        // 模板下拉选择（放在开始按钮上方）
-        val setText = mapOf("user" to "用户模板", "dev" to "开发者模板", "all" to "全部模板")
-        val sel = makeBtn("整理模板：${setText[Prefs.activeTemplateSet()] ?: "用户模板"}  ▾", false) {}
-        sel.setOnClickListener {
-            val cur = Prefs.activeTemplateSet()
-            val next = when (cur) { "user" -> "dev"; "dev" -> "all"; else -> "user" }
-            Prefs.setActiveTemplateSet(next)
-            sel.text = "整理模板：${setText[next]}  ▾"
-            setStatus("整理将使用：${setText[next]}")
+
+        // 手动从【全部模板】勾选本次要整理的目标图标（用户+开发者模板一起列出）
+        pillTitle(l, "🎯 勾选要整理的目标模板")
+        pillSub(l, "直接点选即可勾/取消（多选）；不勾任何模板则只按相似度归类。")
+        val allTpls = templateRepo.list("user") + templateRepo.list("dev")
+        if (allTpls.isEmpty()) {
+            pillSub(l, "（暂无模板——请先到「模板/工具」页截图加入后,再回来勾选）")
+        } else {
+            allTpls.forEach { t ->
+                val checked = t.label in Prefs.activeTemplateIds()
+                val p = ThemeConfig.pal()
+                val row = TextView(this).apply {
+                    text = (if (checked) "☑  " else "☐  ") + t.label
+                    textSize = 12f
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(ThemeConfig.dp(8).toInt(), ThemeConfig.dp(7).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(7).toInt())
+                    setTextColor(if (checked) p.accent else p.textMain)
+                    typeface = if (checked) android.graphics.Typeface.DEFAULT_BOLD else null
+                    background = ThemeConfig.rounded(if (checked) p.navSel else p.bgCard, 8)
+                    setOnClickListener {
+                        val cur = Prefs.activeTemplateIds()
+                        if (t.label in cur) cur.remove(t.label) else cur.add(t.label)
+                        Prefs.setActiveTemplateIds(cur)
+                        selectTab(currentTab) // 重建以刷新勾选状态
+                    }
+                }
+                row.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                                    .apply { topMargin = ThemeConfig.dp(3).toInt() }
+                l.addView(row)
+            }
         }
-        l.addView(sel)
 
         // 开始/停止 二态按钮
         organizeBtn = makeBtn(if (organizing) "⏹ 停止整理" else "🚀 开始整理", true) { toggleOrganize() }.also { l.addView(it) }
@@ -396,8 +427,7 @@ class FloatWindowService : Service() {
         pillTitle(l, "⚙ 设置")
         val dark = Prefs.darkTheme()
         l.addView(makeBtn("深色模式：" + if (dark) "开" else "关", true) { Prefs.setDarkTheme(!Prefs.darkTheme()); rebuildPanelKeep() })
-        l.addView(makeBtn("重置悬浮窗位置", false) { Prefs.setPanelPos(-1, -1); rebuildPanelKeep() })
-        pillSub(l, "自动理包器 v1.3.0")
+        pillSub(l, "自动理包器 v1.4.0")
         pillSub(l, "仅悬浮窗操作；截图即框选：双指缩放、单指拖动、开始框选后画框。")
     }
 
@@ -459,14 +489,20 @@ class FloatWindowService : Service() {
 
     // ============ 截图 → 全屏框选 → 存为模板 ============
     private fun captureThenCrop() {
-        if (!ShizukuSupport.isAvailable()) { setStatus("Shizuku 未运行"); return }
-        if (!ShizukuSupport.isGranted()) { setStatus("请先授予 Shizuku 权限"); return }
+        if (!ShizukuSupport.isAvailable()) { setStatus("Shizuku 未运行"); appendLog("✗ 无法截图：Shizuku 未运行，请先启动 Shizuku"); return }
+        if (!ShizukuSupport.isGranted()) { setStatus("请先授予 Shizuku 权限"); appendLog("✗ 无法截图：未授予 Shizuku 权限"); return }
         Thread {
             setStatus("正在截图…")
+            appendLog("开始截图…")
             val bmp = ScreenCapturer.capture()
-            if (bmp == null) { setStatus("截图失败，请检查 Shizuku 权限/开启无障碍截图"); return@Thread }
+            if (bmp == null) {
+                setStatus("截图失败，请到「信息」页查看日志")
+                appendLog("✗ 截图失败：请确认 Shizuku 授权开启（uiautomator/shell），或点右上角气泡重新展开再试")
+                return@Thread
+            }
             templateRepo.saveScreenshot(bmp)
             SnapshotHolder.shot = bmp
+            appendLog("✓ 截图成功，进入框选界面")
             handler.post { showCropOverlay(bmp) }
         }.start()
     }
@@ -580,8 +616,15 @@ class FloatWindowService : Service() {
         handler.postDelayed(r, 1500)
     }
 
-    private fun setStatus(msg: String) { handler.post { statusTv?.text = msg } }
-    private fun appendLog(msg: String) { handler.post { logTv?.let { it.text = if (it.text.isNullOrEmpty()) msg else it.text.toString() + "\n" + msg } } }
+    private fun setStatus(msg: String) {
+        lastStatus = msg
+        handler.post { statusTv?.text = msg }
+    }
+    private fun appendLog(msg: String) {
+        if (logBuffer.length > 8000) logBuffer.delete(0, logBuffer.length - 6000)
+        logBuffer.append(msg).append('\n')
+        handler.post { logTv?.text = logBuffer.toString() }
+    }
     private fun removeView(v: View?) { if (v != null) try { wm.removeView(v) } catch (e: Exception) {} }
 
     private fun LayoutInflaterCompat(res: Int): View = android.view.LayoutInflater.from(this).inflate(res, null)

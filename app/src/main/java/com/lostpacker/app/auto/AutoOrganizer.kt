@@ -37,7 +37,12 @@ class AutoOrganizer(
             return
         }
         val repo = com.lostpacker.app.dev.TemplateRepository(context)
-        val templates = repo.templatesFor(Prefs.activeTemplateSet())
+        val selected = Prefs.activeTemplateIds()
+        val templates = (repo.list("user") + repo.list("dev")).filter { it.label in selected }
+        log(if (templates.isEmpty())
+            "当前未勾选任何模板，将仅按相似度归类相同物品"
+        else
+            "本次使用 ${templates.size} 个模板：${templates.joinToString(",") { it.label }}")
 
         Thread {
             try {
@@ -149,5 +154,5 @@ class AutoOrganizer(
 
     private fun status(m: String) { handler.post { onStatus(m) } }
     private fun log(m: String) { handler.post { onLog(m) } }
-    private fun finish(ok: Boolean, m: String) { handler.post { onFinished(ok, m) } }
+    private fun finish(ok: Boolean, m: String) { handler.post { onLog(if (ok) "✓ $m" else "✗ $m"); onFinished(ok, m) } }
 }
