@@ -102,6 +102,8 @@ object ImageMatcher {
         if (bigS !== b) bigS.recycle()
 
         val scales = floatArrayOf(0.55f, 0.7f, 0.85f, 1.0f, 1.2f, 1.45f, 1.75f)
+        // 降采样阶段只找“相似度最高的位置”，不对阈值做剔除——文本等细笔画在降采样后
+        // 普遍低于 0.6，若这里就跳过，后面原分辨率复核就永远到不了。
         var best: Match? = null
         for (f in scales) {
             val tw = max(6, (t.width * s * f).toInt())
@@ -113,7 +115,6 @@ object ImageMatcher {
             // 否则下一次迭代再需要 t 时就变成 "recycled source"。
             if (tplS !== t) tplS.recycle()
             val res = scanBest(bg, bw, bh, tg, tw, th) ?: continue
-            if (res[2] < threshold) continue
             val cx = ((res[0] + tw / 2) / s).toInt().coerceIn(0, b.width - 1)
             val cy = ((res[1] + th / 2) / s).toInt().coerceIn(0, b.height - 1)
             val w = (tw / s).toInt().coerceIn(1, b.width)
@@ -122,35 +123,39 @@ object ImageMatcher {
             if (best == null || cand.score > best!!.score) best = cand
         }
 
-        // 原分辨率复核：多尺度阶段已把大图降到 <=960，文本细笔画容易因降采样的
-        // 1px 缩放/取整错位而掉分。这里拿“原始小图 t + 原始大图 b”在粗定位附近
-        // 的小邻域内再算一次真实 NCC，文本能精确命中。
-        if (best != null && t.width + 1 < b.width && t.height + 1 < b.height) {
-            val cxo = (best.x - t.width / 2).coerceIn(0, b.width - t.width)
-            val cyo = (best.y - t.height / 2).coerceIn(0, b.height - t.height)
-            val tgO = grad(t)
-            val n = t.width * t.height
+        // 原分辨率复核：用“与候选一致的原始尺寸”重建模板，在粗定位附近的真实大图上
+        // 精确算一次 NCC。既修文本细笔画，也兼容图标在大图里按比例变大/变小的情况。
+        if (best != null && t.width + 1 < b.width && t.height + 1 < b.height &&
+            best.w > 0 && best.h > 0 && best.w < b.width && best.h < b.height) {
+            val twf = best.w; val thf = best.h
+            val tRes = if (twf == t.width && thf == t.height) t
+            else Bitmap.createScaledBitmap(t, max(1, twf), max(1, thf), true)
+            val tgO = grad(tRes)
+            if (tRes !== t) tRes.recycle()
+            val n = twf * thf
             val tMean = tgO.sum() / n
             var tVar = 0f; for (v in tgO) { val d = v - tMean; tVar += d * d }
             val tStd = sqrt(tVar)
             if (tStd >= 1e-3f) {
                 val bgO = grad(b)
+                val cxo = (best.x - twf / 2).coerceIn(0, b.width - twf)
+                val cyo = (best.y - thf / 2).coerceIn(0, b.height - thf)
                 val rad = 8
-                val x0 = max(0, cxo - rad); val x1 = min(b.width - t.width, cxo + rad)
-                val y0 = max(0, cyo - rad); val y1 = min(b.height - t.height, cyo + rad)
+                val x0 = max(0, cxo - rad); val x1 = min(b.width - twf, cxo + rad)
+                val y0 = max(0, cyo - rad); val y1 = min(b.height - thf, cyo + rad)
                 var ob = -1f; var ox = cxo; var oy = cyo
                 var yy = y0
                 while (yy <= y1) {
                     var xx = x0
                     while (xx <= x1) {
-                        val v = nccAt(bgO, b.width, xx, yy, tgO, t.width, t.height, n, tMean, tStd)
+                        val v = nccAt(bgO, b.width, xx, yy, tgO, twf, thf, n, tMean, tStd)
                         if (v > ob) { ob = v; ox = xx; oy = yy }
                         xx++
                     }
                     yy++
                 }
                 if (ob >= threshold) {
-                    best = Match(ox + t.width / 2, oy + t.height / 2, t.width, t.height, ob)
+                    best = Match(ox + twf / 2, oy + thf / 2, twf, thf, ob)
                 } else {
                     best = null
                 }

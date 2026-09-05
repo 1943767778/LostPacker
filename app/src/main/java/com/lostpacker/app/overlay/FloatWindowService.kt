@@ -600,17 +600,29 @@ class FloatWindowService : Service() {
         findRow.addView(makeImgSlot(imgBig, "大图", { cropMode = CropMode.PICK_IMG; cropSlot = "BIG"; chooseImageSource() }, { confirmClearImg("大图") { imgBig = null; selectTab(3) } }), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         findRow.addView(makeImgSlot(imgTpl, "小图", { cropMode = CropMode.PICK_IMG; cropSlot = "TPL"; chooseImageSource() }, { confirmClearImg("小图") { imgTpl = null; selectTab(3) } }), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         l.addView(findRow)
+        val findResult = TextView(this).apply {
+            text = ""
+            textSize = 13f
+            setTextColor(ThemeConfig.pal().textSub)
+            setPadding(ThemeConfig.dp(4).toInt(), ThemeConfig.dp(6).toInt(), 0, 0)
+        }
+        l.addView(findResult)
         l.addView(makeBtn("📍 在大图中找小图", primary = true) {
             if (imgBig == null || imgTpl == null) { setStatus("请先选大图和小图"); return@makeBtn }
+            findResult.text = "正在搜索图中目标…"
+            findResult.setTextColor(ThemeConfig.pal().textSub)
             Thread {
-                setStatus("正在搜索图中目标…")
                 val hit = com.lostpacker.app.vision.ImageMatcher.locateTemplate(imgBig!!, imgTpl!!)
                 handler.post {
                     if (hit != null) {
+                        findResult.text = "✔ 已找到目标：中心(${hit.x},${hit.y}) ${hit.w}x${hit.h} 相似度${"%.2f".format(hit.score)}"
+                        findResult.setTextColor(0xFF2ECC71.toInt())
                         setStatus("找到！中心(${hit.x},${hit.y}) 尺寸${hit.w}x${hit.h} 相似度${"%.2f".format(hit.score)}")
                         appendLog("图中找图命中 中心(${hit.x},${hit.y}) 尺寸${hit.w}x${hit.h} 相似度${"%.2f".format(hit.score)}")
                         showFindResult(imgBig!!, hit)   // 弹全屏标注，直观确认命中位置
                     } else {
+                        findResult.text = "✕ 未找到目标（相似度过低）"
+                        findResult.setTextColor(0xFFE74C3C.toInt())
                         setStatus("未找到匹配目标（相似度过低）")
                         appendLog("图中找图未命中")
                     }
