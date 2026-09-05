@@ -71,25 +71,40 @@ object ImageMatcher {
 
     /**
      * 图中找图：在大图 [big] 中找小图 [templ]。
-     * 用归一化互相关(NCC)逐窗口扫描（等比缩小加速、步进逐格），
-     * 要求两张图为同一比例（同一次游戏截图里框出时效果最好）。
-     * 返回大图坐标下模板中心点 + 相似度(0..1)，越高越像。
+     * 多尺度 + 归一化互相关(NCC) 逐窗口扫描：先等比把大图缩到宽<=960 提速，
+     * 再对模板尝试多个缩放比例，把命中率提到最高。
+     * 返回大图坐标下模板中心点 + 相似度(0..1)。
      */
     fun locateTemplate(big: Bitmap, templ: Bitmap, threshold: Float = 0.6f): Pair<android.graphics.Point, Float>? {
-        if (big.width < templ.width || big.height < templ.height) return null
         val s = if (big.width > 960) 960f / big.width else 1f
         val bw = max(1, (big.width * s).toInt()); val bh = max(1, (big.height * s).toInt())
-        val tw = max(1, (templ.width * s).toInt()); val th = max(1, (templ.height * s).toInt())
-        if (tw < 6 || th < 6 || bw < tw || bh < th) return null
         val bigS = Bitmap.createScaledBitmap(big, bw, bh, true)
-        val tplS = Bitmap.createScaledBitmap(templ, tw, th, true)
         val bg = gray(bigS); bigS.recycle()
-        val tg = gray(tplS); tplS.recycle()
+
+        val scales = floatArrayOf(0.55f, 0.7f, 0.85f, 1.0f, 1.2f, 1.45f, 1.75f)
+        var best: Pair<android.graphics.Point, Float>? = null
+        for (f in scales) {
+            val tw = max(6, (templ.width * s * f).toInt())
+            val th = max(6, (templ.height * s * f).toInt())
+            if (tw > bw || th > bh) continue
+            val tplS = Bitmap.createScaledBitmap(templ, tw, th, true)
+            val tg = gray(tplS); tplS.recycle()
+            val res = scanBest(bg, bw, bh, tg, tw, th) ?: continue
+            if (res[2] < threshold) continue
+            val cx = ((res[0] + tw / 2) / s).toInt().coerceIn(0, big.width - 1)
+            val cy = ((res[1] + th / 2) / s).toInt().coerceIn(0, big.height - 1)
+            val cand = android.graphics.Point(cx, cy) to res[2].coerceIn(0f, 1f)
+            if (best == null || cand.second > best!!.second) best = cand
+        }
+        return best
+    }
+
+    /** 单尺度逐窗口 NCC，返回 {bestX, bestY, bestNcc}，找不到返回 null */
+    private fun scanBest(bg: FloatArray, bw: Int, bh: Int, tg: FloatArray, tw: Int, th: Int): FloatArray? {
         val n = tg.size
         val tMean = tg.sum() / n
         var tVar = 0f; for (v in tg) { val d = v - tMean; tVar += d * d }
         val tStd = sqrt(tVar)
-
         val step = max(2, tw / 4)
         var bestNcc = -1f; var bestX = -1; var bestY = -1
         var by = 0
@@ -113,10 +128,7 @@ object ImageMatcher {
             }
             by += step
         }
-        if (bestX < 0 || bestNcc < threshold) return null
-        val cx = ((bestX + tw / 2) / s).toInt().coerceIn(0, big.width - 1)
-        val cy = ((bestY + th / 2) / s).toInt().coerceIn(0, big.height - 1)
-        return android.graphics.Point(cx, cy) to bestNcc.coerceIn(0f, 1f)
+        return if (bestX < 0) null else floatArrayOf(bestX.toFloat(), bestY.toFloat(), bestNcc)
     }
 
     /** 窗口标准差：sum((g-wMean)^2)/n 的开方（用 sum(g^2) 计算，需两次扫描窗口） */

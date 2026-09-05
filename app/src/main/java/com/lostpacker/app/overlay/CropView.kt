@@ -14,10 +14,11 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * 截图→框选图标视图：
- *  - 双指捏合缩放、单指拖动平移查看整张截图
- *  - 点击「开始框选」进入画框模式，单指画框选中某个物品图标
- *  - [selectedBitmap] 返回源图上按框裁剪的图标
+ * 截图/上传图 → 框选图标视图：
+ *  - 单指拖动直接框选（无需切换“框选模式”按钮）
+ *  - 双指：捏合缩放 + 双指拖动移动画面
+ *  - 「框全图」一键框整张图片
+ * [selectedBitmap] 返回源图上按框裁剪的图标（独立拷贝，不随源图回收而失效）。
  */
 class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null)
     : View(context, attrs) {
@@ -29,8 +30,6 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     private var ty = 0f
     private var fitScale = 1f
 
-    var boxMode = false
-
     private val density: Float get() = resources.displayMetrics.density
 
     private val fill = Paint().apply { style = Paint.Style.FILL; color = 0x223DDC97.toInt() }
@@ -39,14 +38,12 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     private val mask = Paint().apply { color = 0x55000000 }
 
     // 手势
-    private var lastX = 0f; private var lastY = 0f
     private var pinchStartDist = -1f; private var pinchStartScale = 1f
-    private var pinchMidX = 0f; private var pinchMidY = 0f
+    private var lastMidX = 0f; private var lastMidY = 0f
+    private var drawing = false
 
     // 框（源像素坐标，随缩放/平移保持稳定）
     private var boxL = -1f; private var boxT = -1f; private var boxR = -1f; private var boxB = -1f
-    private var boxStartX = 0f; private var boxStartY = 0f
-    private var drawing = false
 
     fun setSource(bmp: Bitmap?) {
         source = bmp
@@ -76,7 +73,6 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val bmp = source ?: return
-        // 底图
         canvas.drawBitmap(bmp, null, RectF(toViewX(0f), toViewY(0f), toViewX(bmp.width.toFloat()), toViewY(bmp.height.toFloat())), null)
         // 外围压暗，突出图像
         canvas.drawRect(0f, 0f, width.toFloat(), max(0f, toViewY(0f)), mask)
@@ -91,10 +87,8 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             canvas.drawRect(l, t, r, b, border)
             canvas.drawText("${(max(boxL,boxR)-min(boxL,boxR)).toInt()}x${(max(boxT,boxB)-min(boxT,boxB)).toInt()}px",
                 l + 6, if (t > 22) t - 6 else b + 22, tip)
-        } else if (!boxMode) {
-            canvas.drawText("双指缩放 · 单指拖动 | 点「开始框选」画框", 12f, 22f, tip)
         } else {
-            canvas.drawText("单指拖动框出物品图标", 12f, 22f, tip)
+            canvas.drawText("单指拖动即可框选 · 双指捏合缩放 / 双指拖动移动", 12f, 22f, tip)
         }
     }
 
@@ -102,42 +96,34 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         val bmp = source ?: return false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (boxMode) {
-                    drawing = true
-                    val sx = toSrcX(event.x).coerceIn(0f, bmp.width.toFloat())
-                    val sy = toSrcY(event.y).coerceIn(0f, bmp.height.toFloat())
-                    boxStartX = sx; boxStartY = sy
-                    boxL = sx; boxT = sy; boxR = sx; boxB = sy
-                    invalidate()
-                } else {
-                    lastX = event.x; lastY = event.y
-                }
+                drawing = true
+                val sx = toSrcX(event.x).coerceIn(0f, bmp.width.toFloat())
+                val sy = toSrcY(event.y).coerceIn(0f, bmp.height.toFloat())
+                boxL = sx; boxT = sy; boxR = sx; boxB = sy
+                invalidate()
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
-                // 进入双指缩放
-                val p = pointerDist(event)
-                if (p > 0) { pinchStartDist = p; pinchStartScale = scale; pinchMidX = event.getX(0) + (event.getX(1)-event.getX(0))/2; pinchMidY = event.getY(0) + (event.getY(1)-event.getY(0))/2 }
+                if (drawing) boxL = -1f  // 加到双指时取消正在画的框
+                drawing = false
+                val d = pointerDist(event)
+                if (d > 0) { pinchStartDist = d; pinchStartScale = scale }
+                lastMidX = midX(event); lastMidY = midY(event)
             }
             MotionEvent.ACTION_MOVE -> {
                 if (event.pointerCount >= 2 && pinchStartDist > 0) {
+                    // 双指：先按移动矢量平移，再按距离变化缩放
+                    val mx = midX(event); val my = midY(event)
+                    tx += mx - lastMidX; ty += my - lastMidY
+                    lastMidX = mx; lastMidY = my
                     val d = pointerDist(event)
-                    var k = if (pinchStartDist > 0) d / pinchStartDist else 1f
-                    val newScale = (pinchStartScale * k).coerceIn(fitScale, 6f)
-                    k = newScale / scale
-                    // 绕中点缩放
-                    tx = pinchMidX - (pinchMidX - tx) * k
-                    ty = pinchMidY - (pinchMidY - ty) * k
-                    scale = newScale
-                } else if (boxMode && drawing) {
+                    scale = (pinchStartScale * d / pinchStartDist).coerceIn(fitScale, 6f)
+                    invalidate()
+                } else if (drawing) {
                     val sx = toSrcX(event.x).coerceIn(0f, bmp.width.toFloat())
                     val sy = toSrcY(event.y).coerceIn(0f, bmp.height.toFloat())
                     boxR = sx; boxB = sy
-                } else {
-                    tx += event.x - lastX
-                    ty += event.y - lastY
-                    lastX = event.x; lastY = event.y
+                    invalidate()
                 }
-                invalidate()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 pinchStartDist = -1f
@@ -153,12 +139,8 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         return kotlin.math.sqrt(dx * dx + dy * dy)
     }
 
-    /** 返回源图上按框裁剪出的图标；未画框或尺度过小时返回 null */
-    fun selectedBitmap(): Bitmap? {
-        val r = selectedRect() ?: return null
-        val bmp = source ?: return null
-        return Bitmap.createBitmap(bmp, r.left, r.top, r.width(), r.height())
-    }
+    private fun midX(e: MotionEvent) = (e.getX(0) + e.getX(1)) / 2f
+    private fun midY(e: MotionEvent) = (e.getY(0) + e.getY(1)) / 2f
 
     /** 返回源图坐标下的框选矩形；未画框或过小返回 null */
     fun selectedRect(): Rect? {
@@ -170,6 +152,14 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         val b = max(boxT, boxB).toInt().coerceIn(0, bmp.height)
         if (r - l <= 1 || b - t <= 1) return null
         return Rect(l, t, r, b)
+    }
+
+    /** 返回源图上按框裁剪出的图标（独立拷贝，避免源图被回收后失效）。 */
+    fun selectedBitmap(): Bitmap? {
+        val r = selectedRect() ?: return null
+        val bmp = source ?: return null
+        val win = Bitmap.createBitmap(bmp, r.left, r.top, r.width(), r.height())
+        return win.copy(Bitmap.Config.ARGB_8888, false)
     }
 
     /** 一键框选整张图片 */

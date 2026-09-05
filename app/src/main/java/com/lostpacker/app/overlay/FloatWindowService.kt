@@ -852,20 +852,16 @@ class FloatWindowService : Service() {
             background = ThemeConfig.rounded(0xCC000000.toInt(), 14)
             setPadding(ThemeConfig.dp(10).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(10).toInt(), ThemeConfig.dp(8).toInt())
         }
-        val boxBtn = makeCropBtn("开始框选")
-        val okBtn = makeCropBtn(confirmLabel())
         val allBtn = makeCropBtn("框全图")
+        val okBtn = makeCropBtn(confirmLabel())
         val cancelBtn = makeCropBtn("取消")
-        boxBtn.background = ThemeConfig.stroked(0xFF4FC3F7.toInt(), 8, 1)
-        okBtn.background = ThemeConfig.rounded(0xFF4FC3F7.toInt(), 8)
         allBtn.background = ThemeConfig.rounded(0xFF8BC34A.toInt(), 8)
+        okBtn.background = ThemeConfig.rounded(0xFF4FC3F7.toInt(), 8)
         cancelBtn.setBackground(ThemeConfig.stroked(0xFF888888.toInt(), 8, 1))
-        boxBtn.setOnClickListener { cv.boxMode = !cv.boxMode; boxBtn.text = if (cv.boxMode) "取消框选" else "开始框选" }
         allBtn.setOnClickListener { cv.selectAll() }
         okBtn.setOnClickListener { onCropConfirm(cv) }
         cancelBtn.setOnClickListener { teardownCrop(bmp) }
         bar.addView(allBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(boxBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(okBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(cancelBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
@@ -875,7 +871,7 @@ class FloatWindowService : Service() {
         val lp = WindowManager.LayoutParams(MATCH_PARENT, MATCH_PARENT, overlayType, FLAG_NOT_FOCUSABLE or FLAG_NOT_TOUCH_MODAL, PixelFormat.TRANSLUCENT)
         wm.addView(root, lp)
         cropRoot = root
-        setStatus("双指缩放 · 单指拖动，点「开始框选」后画框")
+        setStatus("单指拖动框选 · 双指捏合缩放 / 双指拖动移动")
     }
 
     private fun makeCropBtn(label: String): TextView = TextView(this).apply {
