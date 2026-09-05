@@ -28,6 +28,14 @@ object Prefs {
     fun stepDelayMs(): Long = sp.getLong("step_delay", 350L)
     fun setStepDelayMs(v: Long) = sp.edit().putLong("step_delay", v).apply()
 
+    // 悬浮窗：深色主题 + 位置记忆
+    fun darkTheme(): Boolean = sp.getBoolean("dark_theme", false)
+    fun setDarkTheme(v: Boolean) = sp.edit().putBoolean("dark_theme", v).apply()
+
+    fun panelX(): Int = sp.getInt("panel_x", -1)
+    fun panelY(): Int = sp.getInt("panel_y", -1)
+    fun setPanelPos(x: Int, y: Int) = sp.edit().putInt("panel_x", x).putInt("panel_y", y).apply()
+
     fun githubToken(): String = sp.getString("github_token", "") ?: ""
     fun setGithubToken(v: String) = sp.edit().putString("github_token", v).apply()
 
