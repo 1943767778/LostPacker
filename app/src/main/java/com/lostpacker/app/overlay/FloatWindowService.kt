@@ -7,6 +7,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
@@ -81,6 +84,7 @@ class FloatWindowService : Service() {
     private var imgB: Bitmap? = null
     private var imgBig: Bitmap? = null
     private var imgTpl: Bitmap? = null
+    private var findOverlay: View? = null
 
     private var dragDX = 0f
     private var dragDY = 0f
@@ -602,9 +606,14 @@ class FloatWindowService : Service() {
                 setStatus("正在搜索图中目标…")
                 val hit = com.lostpacker.app.vision.ImageMatcher.locateTemplate(imgBig!!, imgTpl!!)
                 handler.post {
-                    if (hit != null) setStatus("找到！位于 (${hit.first.x},${hit.first.y})，相似度 ${"%.2f".format(hit.second)}")
-                    else setStatus("未找到匹配目标")
-                    appendLog(if (hit != null) "图中找图命中 (${hit.first.x},${hit.first.y})" else "图中找图未命中")
+                    if (hit != null) {
+                        setStatus("找到！中心(${hit.x},${hit.y}) 尺寸${hit.w}x${hit.h} 相似度${"%.2f".format(hit.score)}")
+                        appendLog("图中找图命中 中心(${hit.x},${hit.y}) 尺寸${hit.w}x${hit.h} 相似度${"%.2f".format(hit.score)}")
+                        showFindResult(imgBig!!, hit)   // 弹全屏标注，直观确认命中位置
+                    } else {
+                        setStatus("未找到匹配目标（相似度过低）")
+                        appendLog("图中找图未命中")
+                    }
                 }
             }.start()
         })
@@ -615,6 +624,52 @@ class FloatWindowService : Service() {
         val dev = repo().list("dev")
         pillSub(l, if (dev.isEmpty()) "（暂无开发者素材）" else "已有 ${dev.size} 项素材")
         l.addView(makeBtn("📦 导出开发者素材（命名后分享）", true) { exportDevDialog() })
+    }
+
+    /** 全屏展示大图，并用绿色矩形+文字标注命中位置；点图片可关闭 */
+    private fun showFindResult(bmp: Bitmap, hit: com.lostpacker.app.vision.ImageMatcher.Match) {
+        // 直接在位图副本上绘制标注，保证与图片坐标对齐（与显示缩放方式无关）
+        val marked = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val c = Canvas(marked)
+        c.drawBitmap(bmp, 0f, 0f, null)
+        val l = (hit.x - hit.w / 2f).coerceIn(0f, bmp.width.toFloat())
+        val t = (hit.y - hit.h / 2f).coerceIn(0f, bmp.height.toFloat())
+        val line = Paint().apply {
+            color = Color.GREEN
+            style = Paint.Style.STROKE
+            strokeWidth = ThemeConfig.dp(3).toFloat()
+        }
+        c.drawRect(l, t, (l + hit.w).coerceAtMost(bmp.width.toFloat()),
+            (t + hit.h).coerceAtMost(bmp.height.toFloat()), line)
+        val tp = Paint().apply { color = Color.GREEN; textSize = 28f; isAntiAlias = true }
+        c.drawText("${hit.w}x${hit.h} 相似度 ${"%.2f".format(hit.score)}",
+            l, (t - 10).coerceAtLeast(28f), tp)
+
+        val marker = ImageView(this).apply {
+            setImageBitmap(marked)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setOnClickListener { removeFindOverlay() }
+        }
+        val bar = TextView(this).apply {
+            text = "命中位置已用绿色框标注，点击图片关闭"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xCC000000.toInt())
+            setPadding(ThemeConfig.dp(12).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(12).toInt(), ThemeConfig.dp(8).toInt())
+        }
+        val overlay = FrameLayout(this).apply {
+            addView(marker)
+            addView(bar, FrameLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
+        }
+        removeFindOverlay()
+        val lp = WindowManager.LayoutParams(MATCH_PARENT, MATCH_PARENT, overlayType,
+            FLAG_NOT_FOCUSABLE or FLAG_NOT_TOUCH_MODAL, PixelFormat.TRANSLUCENT)
+        wm.addView(overlay, lp)
+        findOverlay = overlay
+    }
+
+    private fun removeFindOverlay() {
+        findOverlay?.let { runCatching { wm.removeView(it) } }
+        findOverlay = null
     }
 
     private fun confirmClearImg(label: String, onOk: () -> Unit) {
