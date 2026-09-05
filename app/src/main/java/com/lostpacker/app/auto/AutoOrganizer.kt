@@ -36,7 +36,8 @@ class AutoOrganizer(
             finish(false, "尚未框选识别区域")
             return
         }
-        val templates = com.lostpacker.app.dev.TemplateRepository(context).list()
+        val repo = com.lostpacker.app.dev.TemplateRepository(context)
+        val templates = repo.templatesFor(Prefs.activeTemplateSet())
 
         Thread {
             try {
@@ -104,20 +105,44 @@ class AutoOrganizer(
         return cells
     }
 
-    /** 按相似度把相同物品分组 */
+    /** 按模板 + 相似度把相同物品分组（先按选中模板命名，未命中的再按相似度聚类） */
     private fun group(cells: List<com.lostpacker.app.data.Cell>, templates: List<ItemTemplate>): List<MutableList<com.lostpacker.app.data.Cell>> {
         val threshold = Prefs.mergeThreshold()
-        val groups = ArrayList<MutableList<com.lostpacker.app.data.Cell>>()
         val occupied = cells.filter { it.exists }
 
+        // 1) 命中已知模板：以模板 id 作为分组键
+        val named = LinkedHashMap<String, MutableList<com.lostpacker.app.data.Cell>>()
+        val unnamed = ArrayList<com.lostpacker.app.data.Cell>()
         for (cell in occupied) {
-            val matched = groups.firstOrNull { g ->
-                g.isNotEmpty() && ImageMatcher.similarity(g.first().fingerprint, cell.fingerprint) >= threshold
+            var best: Pair<ItemTemplate, Float>? = null
+            for (t in templates) {
+                if (t.fingerprint.size != ImageMatcher.FP_SIZE * ImageMatcher.FP_SIZE) continue
+                val s = ImageMatcher.similarity(cell.fingerprint, t.fingerprint)
+                if (s >= threshold && (best == null || s > best!!.second)) best = t to s
             }
-            if (matched != null) matched.add(cell) else groups.add(mutableListOf(cell))
+            if (best != null) named.getOrPut(best.first.id) { mutableListOf() }.add(cell)
+            else unnamed.add(cell)
         }
-        // 只保留有合并价值的组
-        return groups.filter { it.size > 1 }.toMutableList()
+        val groups = ArrayList<MutableList<com.lostpacker.app.data.Cell>>()
+        named.forEach { g ->
+            if (g.value.size > 1) groups.add(g.value)
+        }
+
+        // 2) 未命中模板的格，按相似度聚类
+        val used = BooleanArray(unnamed.size)
+        for (i in unnamed.indices) {
+            if (used[i]) continue
+            val cluster = mutableListOf(unnamed[i])
+            used[i] = true
+            for (j in i + 1 until unnamed.size) {
+                if (used[j]) continue
+                if (cluster.any { ImageMatcher.similarity(it.fingerprint, unnamed[j].fingerprint) >= threshold }) {
+                    cluster.add(unnamed[j]); used[j] = true
+                }
+            }
+            if (cluster.size > 1) groups.add(cluster)
+        }
+        return groups
     }
 
     private fun indexToLabel(cell: com.lostpacker.app.data.Cell): String = "格${cell.index + 1}"

@@ -11,53 +11,59 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * 管理图标模板：
- *  - 模板保存到应用缓存目录，按 label 命名
- *  - 截图存到独立的缓存子目录（退出时清理，防占用空间）
- *  - 按游戏名导出 zip，供用户上传 / 开发者预制到 App
+ * 模板管理，分两类：
+ *  - user：用户在“整理模板”页自建/管理、整理时选用的模板
+ *  - dev ：开发者工具里截图框选收集、导出给开发者的素材模板
+ * 两类分别在各自页面有列表；整理时通过下拉选择用哪套（或全部）。
  */
 class TemplateRepository(private val context: Context) {
 
-    private val dir: File get() = Prefs.saveImageDir(context)
+    fun dir(kind: String): File =
+        File(context.getExternalFilesDir(null), "templates/$kind").apply { if (!exists()) mkdirs() }
 
     /** 截图缓存目录（临时，退出清除） */
     val screenshotCacheDir: File
         get() = File(context.cacheDir, "lostpacker_shots").apply { if (!exists()) mkdirs() }
 
-    fun list(): List<ItemTemplate> {
-        val d = dir
+    fun list(kind: String): List<ItemTemplate> = scan(dir(kind))
+
+    private fun scan(d: File): List<ItemTemplate> {
         if (!d.exists()) return emptyList()
         return d.listFiles { f -> f.extension.equals("png", true) || f.extension.equals("jpg", true) }
             ?.sortedBy { it.name }
             ?.map { f ->
                 val label = f.name.substringBeforeLast('.')
                 val bmp = BitmapFactory.decodeFile(f.absolutePath)
-                ItemTemplate(
-                    id = label,
-                    label = label,
-                    file = f,
-                    fingerprint = bmp?.let { ImageMatcher.fingerprint(it) } ?: FloatArray(0)
-                )
+                ItemTemplate(id = label, label = label, file = f,
+                    fingerprint = bmp?.let { ImageMatcher.fingerprint(it) } ?: FloatArray(0))
             } ?: emptyList()
     }
 
-    /** 保存一张（裁切得到的）图标作为模板 */
-    fun save(label: String, bitmap: Bitmap): File {
-        val f = File(dir, sanitize(label).removeSuffix(".png") + ".png")
-        val out = f.outputStream()
-        try {
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-        } finally {
-            out.close()
-        }
+    /** 保存一张图标模板到指定分类 */
+    fun save(kind: String, label: String, bitmap: Bitmap): File {
+        val f = File(dir(kind), sanitize(label).removeSuffix(".png") + ".png")
+        f.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         return f
+    }
+
+    /** 删除某个分类下的模板 */
+    fun delete(kind: String, label: String): Boolean {
+        val f = File(dir(kind), sanitize(label).removeSuffix(".png") + ".png")
+        return f.exists() && f.delete()
+    }
+
+    /** 整理时按选中模板集返回用于识别的模板 */
+    fun templatesFor(set: String): List<ItemTemplate> {
+        val list = ArrayList<ItemTemplate>()
+        if (set == "user" || set == "all") list += list("user")
+        if (set == "dev" || set == "all") list += list("dev")
+        return list
     }
 
     /** 保存一张 Shizuku 截屏到缓存（临时） */
     fun saveScreenshot(bmp: Bitmap): File {
         val f = File(screenshotCacheDir, "shot_${System.currentTimeMillis()}.png")
-        val out = f.outputStream()
-        try { bmp.compress(Bitmap.CompressFormat.JPEG, 92, out) } finally { out.close() }
+        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 92, it) }
         return f
     }
 
@@ -67,11 +73,11 @@ class TemplateRepository(private val context: Context) {
         if (d.exists()) d.listFiles()?.forEach { it.delete() }
     }
 
-    /** 按游戏名导出模板 zip（便于用户区分不同游戏的图标并上传） */
-    fun exportGameTemplates(gameName: String): File {
+    /** 导出开发者素材模板 zip（命名区分游戏，供开发者预制） */
+    fun exportDevTemplates(gameName: String): File {
         val safe = sanitize(gameName)
-        val zip = File(context.cacheDir, "${safe}_templates.zip")
-        val files = dir.listFiles { f -> f.extension.equals("png", true) || f.extension.equals("jpg", true) }
+        val zip = File(context.cacheDir, "${safe}_dev_templates.zip")
+        val files = dir("dev").listFiles { f -> f.extension.equals("png", true) || f.extension.equals("jpg", true) }
             ?: emptyArray()
         ZipOutputStream(zip.outputStream()).use { zos ->
             for (f in files) {
@@ -79,21 +85,14 @@ class TemplateRepository(private val context: Context) {
                 f.inputStream().use { it.copyTo(zos) }
                 zos.closeEntry()
             }
-            // 附一份清单
             zos.putNextEntry(ZipEntry("$safe/README.txt"))
-            zos.write(("当前模板(${files.size}个)：\n" + files.joinToString("\n") { it.name }).toByteArray())
+            zos.write(("开发者素材模板(${files.size}个)：\n" + files.joinToString("\n") { it.name }).toByteArray())
             zos.closeEntry()
         }
         return zip
     }
 
-    /** 兼容旧命名：生成通用导出包 */
-    fun exportTemplatesZip(): File = exportGameTemplates("templates")
-
-    /**
-     * 开发者预制在 assets/presets/<游戏名>/ 里的图标模板（开箱即用）。
-     * 你上传的导出包会被我处理后放到该目录，随 APK 一起发布，所有用户无需自己再框选。
-     */
+    /** 开发者预制在 assets/presets/<游戏名>/ 的图标（开箱即用） */
     fun presetTemplates(): List<ItemTemplate> {
         val list = ArrayList<ItemTemplate>()
         try {
@@ -112,9 +111,7 @@ class TemplateRepository(private val context: Context) {
                     }
                 }
             }
-        } catch (e: Exception) {
-            // assets 目录不存在时忽略
-        }
+        } catch (e: Exception) { /* 无预设时忽略 */ }
         return list
     }
 

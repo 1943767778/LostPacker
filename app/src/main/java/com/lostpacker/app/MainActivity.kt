@@ -12,7 +12,6 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import com.lostpacker.app.dev.DevToolsActivity
 import com.lostpacker.app.overlay.FloatWindowService
 import com.lostpacker.app.prefs.Prefs
 import com.lostpacker.app.shizuku.ShizukuSupport
@@ -41,9 +40,6 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.btnRequestShizuku).setOnClickListener {
             requestShizuku()
-        }
-        findViewById<Button>(R.id.btnDevTools).setOnClickListener {
-            startActivity(Intent(this, DevToolsActivity::class.java))
         }
 
         checkBasePermissions()

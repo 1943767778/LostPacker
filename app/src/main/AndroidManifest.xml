@@ -25,17 +25,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.LostPacker">
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
+        <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity android:name=".dev.DevToolsActivity" />
-        <activity android:name=".dev.IconCropActivity" />
 
         <service
             android:name=".overlay.FloatWindowService"

@@ -36,6 +36,10 @@ object Prefs {
     fun panelY(): Int = sp.getInt("panel_y", -1)
     fun setPanelPos(x: Int, y: Int) = sp.edit().putInt("panel_x", x).putInt("panel_y", y).apply()
 
+    // 当前整理使用的模板集：user / dev
+    fun activeTemplateSet(): String = sp.getString("active_tpl_set", "user") ?: "user"
+    fun setActiveTemplateSet(v: String) = sp.edit().putString("active_tpl_set", v).apply()
+
     fun githubToken(): String = sp.getString("github_token", "") ?: ""
     fun setGithubToken(v: String) = sp.edit().putString("github_token", v).apply()
 

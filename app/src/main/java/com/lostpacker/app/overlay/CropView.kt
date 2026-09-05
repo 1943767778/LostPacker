@@ -13,8 +13,10 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * 图标框选视图：显示源截图（按比例适配），拖拽画出要识别/导出的图标矩形。
- * 通过 [selectedBitmap] 返回源图上裁剪出的图标。
+ * 截图→框选图标视图：
+ *  - 双指捏合缩放、单指拖动平移查看整张截图
+ *  - 点击「开始框选」进入画框模式，单指画框选中某个物品图标
+ *  - [selectedBitmap] 返回源图上按框裁剪的图标
  */
 class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null)
     : View(context, attrs) {
@@ -22,86 +24,146 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     private var source: Bitmap? = null
 
     private var scale = 1f
-    private var offsetX = 0f
-    private var offsetY = 0f
+    private var tx = 0f
+    private var ty = 0f
+    private var fitScale = 1f
+
+    var boxMode = false
 
     private val density: Float get() = resources.displayMetrics.density
 
     private val fill = Paint().apply { style = Paint.Style.FILL; color = 0x223DDC97.toInt() }
     private val border = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 3f * density; color = 0xFF3DDC97.toInt() }
-    private val tip = Paint().apply { textSize = 14f * density; color = Color.WHITE }
-    private val dim = Paint().apply { color = 0x66000000 }
+    private val tip = Paint().apply { textSize = 13f * density; color = Color.WHITE }
+    private val mask = Paint().apply { color = 0x55000000 }
 
-    private var startX = 0f; private var startY = 0f
-    private var endX = 0f; private var endY = 0f
-    private var hasRect = false
+    // 手势
+    private var lastX = 0f; private var lastY = 0f
+    private var pinchStartDist = -1f; private var pinchStartScale = 1f
+    private var pinchMidX = 0f; private var pinchMidY = 0f
+
+    // 框（源像素坐标，随缩放/平移保持稳定）
+    private var boxL = -1f; private var boxT = -1f; private var boxR = -1f; private var boxB = -1f
+    private var boxStartX = 0f; private var boxStartY = 0f
+    private var drawing = false
 
     fun setSource(bmp: Bitmap?) {
         source = bmp
-        updateFit()
+        resetToFit()
         invalidate()
     }
 
-    private fun updateFit() {
+    private fun resetToFit() {
         val bmp = source ?: return
         if (width <= 0 || height <= 0) return
-        scale = min(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
-        offsetX = (width - bmp.width * scale) / 2f
-        offsetY = (height - bmp.height * scale) / 2f
+        fitScale = min(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
+        scale = fitScale
+        tx = (width - bmp.width * scale) / 2f
+        ty = (height - bmp.height * scale) / 2f
+        boxL = -1f
     }
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { updateFit() }
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        if (source != null) resetToFit()
+    }
+
+    private fun toViewX(x: Float) = x * scale + tx
+    private fun toViewY(y: Float) = y * scale + ty
+    private fun toSrcX(vx: Float) = (vx - tx) / scale
+    private fun toSrcY(vy: Float) = (vy - ty) / scale
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val bmp = source ?: return
-        val dst = RectF(offsetX, offsetY, offsetX + bmp.width * scale, offsetY + bmp.height * scale)
-        canvas.drawBitmap(bmp, null, dst, null)
-        // 外区压暗
-        canvas.drawRect(0f, 0f, width.toFloat(), offsetY, dim)
-        canvas.drawRect(0f, offsetY + bmp.height * scale, width.toFloat(), height.toFloat(), dim)
-        canvas.drawRect(0f, offsetY, offsetX, offsetY + bmp.height * scale, dim)
-        canvas.drawRect(offsetX + bmp.width * scale, offsetY, width.toFloat(), offsetY + bmp.height * scale, dim)
+        // 底图
+        canvas.drawBitmap(bmp, null, RectF(toViewX(0f), toViewY(0f), toViewX(bmp.width.toFloat()), toViewY(bmp.height.toFloat())), null)
+        // 外围压暗，突出图像
+        canvas.drawRect(0f, 0f, width.toFloat(), max(0f, toViewY(0f)), mask)
+        canvas.drawRect(0f, min(height.toFloat(), toViewY(bmp.height.toFloat())), width.toFloat(), height.toFloat(), mask)
+        canvas.drawRect(0f, toViewY(0f), toViewX(0f), toViewY(bmp.height.toFloat()), mask)
+        canvas.drawRect(toViewX(bmp.width.toFloat()), toViewY(0f), width.toFloat(), toViewY(bmp.height.toFloat()), mask)
 
-        if (hasRect) {
-            val l = min(startX, endX); val t = min(startY, endY)
-            val r = max(startX, endX); val b = max(startY, endY)
+        if (boxL >= 0) {
+            val l = toViewX(min(boxL, boxR)); val t = toViewY(min(boxT, boxB))
+            val r = toViewX(max(boxL, boxR)); val b = toViewY(max(boxT, boxB))
             canvas.drawRect(l, t, r, b, fill)
             canvas.drawRect(l, t, r, b, border)
-            canvas.drawText("框出物品图标 (${toSrc(l).toInt()},${toSrcY(t).toInt()}) ${(toSrc(r) - toSrc(l)).toInt()}x${(toSrcY(b) - toSrcY(t)).toInt()}",
-                l + 6, if (t > 26) t - 6 else b + 24, tip)
+            canvas.drawText("${(max(boxL,boxR)-min(boxL,boxR)).toInt()}x${(max(boxT,boxB)-min(boxT,boxB)).toInt()}px",
+                l + 6, if (t > 22) t - 6 else b + 22, tip)
+        } else if (!boxMode) {
+            canvas.drawText("双指缩放 · 单指拖动 | 点「开始框选」画框", 12f, 22f, tip)
+        } else {
+            canvas.drawText("单指拖动框出物品图标", 12f, 22f, tip)
         }
-    }
-
-    private fun toSrc(v: Float) = (v - offsetX) / scale
-    private fun toSrcY(v: Float) = (v - offsetY) / scale
-
-    /** 返回源图上裁剪出的图标（矩形容器无效时返回 null） */
-    fun selectedBitmap(): Bitmap? {
-        val bmp = source ?: return null
-        val l = (min(startX, endX) - offsetX) / scale
-        val t = (min(startY, endY) - offsetY) / scale
-        val r = (max(startX, endX) - offsetX) / scale
-        val b = (max(startY, endY) - offsetY) / scale
-        val x0 = l.coerceIn(0f, bmp.width.toFloat()).toInt()
-        val y0 = t.coerceIn(0f, bmp.height.toFloat()).toInt()
-        val w = (r.coerceAtMost(bmp.width.toFloat()) - x0).toInt()
-        val h = (b.coerceAtMost(bmp.height.toFloat()) - y0).toInt()
-        if (w <= 0 || h <= 0) return null
-        return Bitmap.createBitmap(bmp, x0, y0, w, h)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        val bmp = source ?: return false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                startX = event.x; startY = event.y
-                endX = event.x; endY = event.y
-                hasRect = true
+                if (boxMode) {
+                    drawing = true
+                    val sx = toSrcX(event.x).coerceIn(0f, bmp.width.toFloat())
+                    val sy = toSrcY(event.y).coerceIn(0f, bmp.height.toFloat())
+                    boxStartX = sx; boxStartY = sy
+                    boxL = sx; boxT = sy; boxR = sx; boxB = sy
+                    invalidate()
+                } else {
+                    lastX = event.x; lastY = event.y
+                }
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // 进入双指缩放
+                val p = pointerDist(event)
+                if (p > 0) { pinchStartDist = p; pinchStartScale = scale; pinchMidX = event.getX(0) + (event.getX(1)-event.getX(0))/2; pinchMidY = event.getY(0) + (event.getY(1)-event.getY(0))/2 }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (event.pointerCount >= 2 && pinchStartDist > 0) {
+                    val d = pointerDist(event)
+                    var k = if (pinchStartDist > 0) d / pinchStartDist else 1f
+                    val newScale = (pinchStartScale * k).coerceIn(fitScale, 6f)
+                    k = newScale / scale
+                    // 绕中点缩放
+                    tx = pinchMidX - (pinchMidX - tx) * k
+                    ty = pinchMidY - (pinchMidY - ty) * k
+                    scale = newScale
+                } else if (boxMode && drawing) {
+                    val sx = toSrcX(event.x).coerceIn(0f, bmp.width.toFloat())
+                    val sy = toSrcY(event.y).coerceIn(0f, bmp.height.toFloat())
+                    boxR = sx; boxB = sy
+                } else {
+                    tx += event.x - lastX
+                    ty += event.y - lastY
+                    lastX = event.x; lastY = event.y
+                }
                 invalidate()
             }
-            MotionEvent.ACTION_MOVE -> { endX = event.x; endY = event.y; invalidate() }
-            MotionEvent.ACTION_UP -> { endX = event.x; endY = event.y; invalidate() }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                pinchStartDist = -1f
+                drawing = false
+            }
         }
         return true
     }
+
+    private fun pointerDist(e: MotionEvent): Float {
+        if (e.pointerCount < 2) return -1f
+        val dx = e.getX(0) - e.getX(1); val dy = e.getY(0) - e.getY(1)
+        return kotlin.math.sqrt(dx * dx + dy * dy)
+    }
+
+    /** 返回源图上按框裁剪出的图标；未画框或尺度过小时返回 null */
+    fun selectedBitmap(): Bitmap? {
+        val bmp = source ?: return null
+        if (boxL < 0) return null
+        val l = min(boxL, boxR).toInt().coerceIn(0, bmp.width)
+        val t = min(boxT, boxB).toInt().coerceIn(0, bmp.height)
+        val r = max(boxL, boxR).toInt().coerceIn(0, bmp.width)
+        val b = max(boxT, boxB).toInt().coerceIn(0, bmp.height)
+        val w = r - l; val h = b - t
+        if (w <= 1 || h <= 1) return null
+        return Bitmap.createBitmap(bmp, l, t, w, h)
+    }
+
+    fun clearBox() { boxL = -1f; invalidate() }
 }

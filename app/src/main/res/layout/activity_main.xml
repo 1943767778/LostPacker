@@ -46,13 +46,6 @@
             android:layout_height="wrap_content"
             android:text="授予 Shizuku 权限" />
 
-        <Button
-            android:id="@+id/btnDevTools"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="开发者工具（上传图片/同步 GitHub）" />
-
         <TextView
             android:id="@+id/tvLog"
             android:layout_width="match_parent"
@@ -66,7 +59,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:text="使用说明：\n1. 安装 Shizuku 并启动（可用无线调试/Wi-Fi ADB）。\n2. 本页点击“授予 Shizuku 权限”，开启悬浮窗。\n3. 悬浮窗内点“框选区域”，框出游戏背包格子区域，确认格子行列数。\n4. 点击“开始整理”即可自动识别并拖动物品合并整理。\n5. 开发者工具可上传图标模板并同步到 GitHub。"
+            android:text="使用说明：\n1. 安装 Shizuku 并启动（可用无线调试/Wi-Fi ADB），点击上方“授予 Shizuku 权限”。\n2. 开启悬浮窗后，所有操作都在悬浮窗里完成：整理页选模板→框选背包区域→开始整理；模板页管理用户模板；工具页收集/导出开发者素材。"
             android:textSize="13sp"
             android:alpha="0.85" />
     </LinearLayout>
