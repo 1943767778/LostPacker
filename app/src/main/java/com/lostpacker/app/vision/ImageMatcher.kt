@@ -98,7 +98,9 @@ object ImageMatcher {
         val s = if (b.width > 960) 960f / b.width else 1f
         val bw = max(1, (b.width * s).toInt()); val bh = max(1, (b.height * s).toInt())
         val bigS = Bitmap.createScaledBitmap(b, bw, bh, true)
-        val bg = grad(bigS); bigS.recycle(); b.recycle()
+        val bg = grad(bigS)
+        if (bigS !== b) bigS.recycle()
+        b.recycle()
 
         val scales = floatArrayOf(0.55f, 0.7f, 0.85f, 1.0f, 1.2f, 1.45f, 1.75f)
         var best: Match? = null
@@ -107,7 +109,10 @@ object ImageMatcher {
             val th = max(6, (t.height * s * f).toInt())
             if (tw > bw || th > bh) continue
             val tplS = Bitmap.createScaledBitmap(t, tw, th, true)
-            val tg = grad(tplS); tplS.recycle()
+            val tg = grad(tplS)
+            // 关键：当目标尺寸与源相同，createScaledBitmap 会原样返回源(==t)，绝不能在这里回收，
+            // 否则下一次迭代再需要 t 时就变成 "recycled source"。
+            if (tplS !== t) tplS.recycle()
             val res = scanBest(bg, bw, bh, tg, tw, th) ?: continue
             if (res[2] < threshold) continue
             val cx = ((res[0] + tw / 2) / s).toInt().coerceIn(0, b.width - 1)
