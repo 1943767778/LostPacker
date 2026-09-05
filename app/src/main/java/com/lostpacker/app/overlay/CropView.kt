@@ -172,5 +172,13 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         return Rect(l, t, r, b)
     }
 
+    /** 一键框选整张图片 */
+    fun selectAll() {
+        val bmp = source ?: return
+        boxL = 0f; boxT = 0f; boxR = bmp.width.toFloat(); boxB = bmp.height.toFloat()
+        drawing = false
+        invalidate()
+    }
+
     fun clearBox() { boxL = -1f; invalidate() }
 }

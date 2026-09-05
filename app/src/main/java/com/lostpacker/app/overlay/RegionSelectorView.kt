@@ -105,6 +105,14 @@ class RegionSelectorView @JvmOverloads constructor(
         return true
     }
 
+    /** 一键框选整个画面 */
+    fun selectAll() {
+        startX = 0f; startY = 0f
+        endX = width.toFloat(); endY = height.toFloat()
+        selecting = false
+        invalidate()
+    }
+
     /** 读取最近一次框选出来的区域（屏坐标）；未框或过小返回 null */
     fun lastRect(): Rect? {
         val l = minOf(startX, endX).toInt()

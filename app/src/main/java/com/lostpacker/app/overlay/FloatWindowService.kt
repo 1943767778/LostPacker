@@ -728,10 +728,17 @@ class FloatWindowService : Service() {
             setPadding(ThemeConfig.dp(10).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(10).toInt(), ThemeConfig.dp(8).toInt())
         }
         val cancel = makeCropBtn("取消")
+        val all = makeCropBtn("框全图")
         val ok = makeCropBtn(if (kind == "backpack") "确定(背包)" else if (kind == "box") "确定(箱子)" else "确定(拆分)")
         cancel.setBackground(ThemeConfig.stroked(0xFF888888.toInt(), 8, 1))
+        all.background = ThemeConfig.rounded(0xFF8BC34A.toInt(), 8)
         ok.background = ThemeConfig.rounded(0xFF4FC3F7.toInt(), 8)
         cancel.setOnClickListener { teardownRegion() }
+        all.setOnClickListener {
+            cv.selectAll()
+            val r = cv.lastRect()
+            if (r != null) { applyRegion(r, kind); teardownRegion(); rebuildPanel(); selectTab(1) }
+        }
         ok.setOnClickListener {
             val r = cv.lastRect()
             if (r == null) { setStatus("请先在画布上拖一个矩形"); return@setOnClickListener }
@@ -739,6 +746,7 @@ class FloatWindowService : Service() {
             teardownRegion(); rebuildPanel(); selectTab(1)
         }
         bar.addView(cancel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bar.addView(all, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(ok, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         val root = FrameLayout(this)
@@ -846,13 +854,17 @@ class FloatWindowService : Service() {
         }
         val boxBtn = makeCropBtn("开始框选")
         val okBtn = makeCropBtn(confirmLabel())
+        val allBtn = makeCropBtn("框全图")
         val cancelBtn = makeCropBtn("取消")
         boxBtn.background = ThemeConfig.stroked(0xFF4FC3F7.toInt(), 8, 1)
         okBtn.background = ThemeConfig.rounded(0xFF4FC3F7.toInt(), 8)
+        allBtn.background = ThemeConfig.rounded(0xFF8BC34A.toInt(), 8)
         cancelBtn.setBackground(ThemeConfig.stroked(0xFF888888.toInt(), 8, 1))
         boxBtn.setOnClickListener { cv.boxMode = !cv.boxMode; boxBtn.text = if (cv.boxMode) "取消框选" else "开始框选" }
+        allBtn.setOnClickListener { cv.selectAll() }
         okBtn.setOnClickListener { onCropConfirm(cv) }
         cancelBtn.setOnClickListener { teardownCrop(bmp) }
+        bar.addView(allBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(boxBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(okBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(cancelBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
