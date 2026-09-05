@@ -11,8 +11,8 @@ android {
         applicationId = "com.lostpacker.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "2.0.4"
+        versionCode = 11
+        versionName = "2.0.5"
     }
 
     signingConfigs {

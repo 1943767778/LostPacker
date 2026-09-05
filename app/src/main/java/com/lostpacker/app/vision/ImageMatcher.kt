@@ -81,28 +81,43 @@ object ImageMatcher {
      * 返回原图坐标下的 [Match]（中心点/尺寸/相似度），未命中返回 null。
      */
     fun locateTemplate(big: Bitmap, templ: Bitmap, threshold: Float = 0.6f): Match? {
-        val s = if (big.width > 960) 960f / big.width else 1f
-        val bw = max(1, (big.width * s).toInt()); val bh = max(1, (big.height * s).toInt())
-        val bigS = Bitmap.createScaledBitmap(big, bw, bh, true)
-        val bg = grad(bigS); bigS.recycle()
+        // 防御：输入位图可能已被回收，或与其它已回收位图共享内存（例如大图小图用了同一张全图）。
+        // 先各自取一块独立拷贝并持有，避免后续 createScaledBitmap 抛 “cannot use a recycled source”。
+        var bCopied: Bitmap? = null
+        var tCopied: Bitmap? = null
+        try {
+            if (big.isRecycled || templ.isRecycled) return null
+            bCopied = big.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+            tCopied = templ.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+        } catch (e: Exception) {
+            return null
+        }
+        val b = bCopied ?: return null
+        val t = tCopied ?: return null
+
+        val s = if (b.width > 960) 960f / b.width else 1f
+        val bw = max(1, (b.width * s).toInt()); val bh = max(1, (b.height * s).toInt())
+        val bigS = Bitmap.createScaledBitmap(b, bw, bh, true)
+        val bg = grad(bigS); bigS.recycle(); b.recycle()
 
         val scales = floatArrayOf(0.55f, 0.7f, 0.85f, 1.0f, 1.2f, 1.45f, 1.75f)
         var best: Match? = null
         for (f in scales) {
-            val tw = max(6, (templ.width * s * f).toInt())
-            val th = max(6, (templ.height * s * f).toInt())
+            val tw = max(6, (t.width * s * f).toInt())
+            val th = max(6, (t.height * s * f).toInt())
             if (tw > bw || th > bh) continue
-            val tplS = Bitmap.createScaledBitmap(templ, tw, th, true)
+            val tplS = Bitmap.createScaledBitmap(t, tw, th, true)
             val tg = grad(tplS); tplS.recycle()
             val res = scanBest(bg, bw, bh, tg, tw, th) ?: continue
             if (res[2] < threshold) continue
-            val cx = ((res[0] + tw / 2) / s).toInt().coerceIn(0, big.width - 1)
-            val cy = ((res[1] + th / 2) / s).toInt().coerceIn(0, big.height - 1)
-            val w = (tw / s).toInt().coerceIn(1, big.width)
-            val h = (th / s).toInt().coerceIn(1, big.height)
+            val cx = ((res[0] + tw / 2) / s).toInt().coerceIn(0, b.width - 1)
+            val cy = ((res[1] + th / 2) / s).toInt().coerceIn(0, b.height - 1)
+            val w = (tw / s).toInt().coerceIn(1, b.width)
+            val h = (th / s).toInt().coerceIn(1, b.height)
             val cand = Match(cx, cy, w, h, res[2].coerceIn(0f, 1f))
             if (best == null || cand.score > best!!.score) best = cand
         }
+        t.recycle()
         return best
     }
 
