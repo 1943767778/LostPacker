@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+.kotlin/
+build/
+*/build/
+captures/
+
+# Machine-specific
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Signing (keystore 不上传，请勿泄露密码)
+keystore/
+
+# OS
+.DS_Store
+
+# 打包中间件
+*.apk.idsig
+*.apk.aab
+/dist/

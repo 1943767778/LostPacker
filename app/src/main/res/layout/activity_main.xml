@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="失空进化自动理包器"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/app_name"
+            android:textSize="14sp"
+            android:alpha="0.7" />
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="状态：未运行"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnStartFloat"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/start_float" />
+
+        <Button
+            android:id="@+id/btnRequestShizuku"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="授予 Shizuku 权限" />
+
+        <Button
+            android:id="@+id/btnDevTools"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="开发者工具（上传图片/同步 GitHub）" />
+
+        <TextView
+            android:id="@+id/tvLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:text="日志：\n（开启悬浮窗后在悬浮窗内操作）" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="使用说明：\n1. 安装 Shizuku 并启动（可用无线调试/Wi-Fi ADB）。\n2. 本页点击“授予 Shizuku 权限”，开启悬浮窗。\n3. 悬浮窗内点“框选区域”，框出游戏背包格子区域，确认格子行列数。\n4. 点击“开始整理”即可自动识别并拖动物品合并整理。\n5. 开发者工具可上传图标模板并同步到 GitHub。"
+            android:textSize="13sp"
+            android:alpha="0.85" />
+    </LinearLayout>
+</ScrollView>

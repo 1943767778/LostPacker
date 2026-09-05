@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/selectorRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#33000000">
+
+    <com.lostpacker.app.overlay.RegionSelectorView
+        android:id="@+id/regionSelectorView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</FrameLayout>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">失空进化自动理包器</string>
+    <string name="float_permission_needed">需要悬浮窗权限，请先授权</string>
+    <string name="shizuku_not_running">Shizuku 未运行，请先在桌面开启 Shizuku 服务</string>
+    <string name="shizuku_permission_denied">未授予 Shizuku 权限，无法进行触控/截图</string>
+    <string name="start_float">开启悬浮窗</string>
+    <string name="stop_float">关闭悬浮窗</string>
+</resources>
