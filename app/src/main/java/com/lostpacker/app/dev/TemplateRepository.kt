@@ -4,22 +4,21 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.lostpacker.app.data.ItemTemplate
-import com.lostpacker.app.prefs.Prefs
 import com.lostpacker.app.vision.ImageMatcher
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * 模板管理，分两类：
- *  - user：用户在“整理模板”页自建/管理、整理时选用的模板
+ * 模板管理，按游戏隔离：
+ *  - user：用户在“整理模板”页自建/管理、整理时勾选用的模板
  *  - dev ：开发者工具里截图框选收集、导出给开发者的素材模板
- * 两类分别在各自页面有列表；整理时通过下拉选择用哪套（或全部）。
+ * 两类分别在各自页面有列表；不同游戏有各自独立的模板目录。
  */
-class TemplateRepository(private val context: Context) {
+class TemplateRepository(private val context: Context, private val game: String) {
 
     fun dir(kind: String): File =
-        File(context.getExternalFilesDir(null), "templates/$kind").apply { if (!exists()) mkdirs() }
+        File(context.getExternalFilesDir(null), "games/$game/templates/$kind").apply { if (!exists()) mkdirs() }
 
     /** 截图缓存目录（临时，退出清除） */
     val screenshotCacheDir: File
@@ -52,13 +51,8 @@ class TemplateRepository(private val context: Context) {
         return f.exists() && f.delete()
     }
 
-    /** 整理时按选中模板集返回用于识别的模板 */
-    fun templatesFor(set: String): List<ItemTemplate> {
-        val list = ArrayList<ItemTemplate>()
-        if (set == "user" || set == "all") list += list("user")
-        if (set == "dev" || set == "all") list += list("dev")
-        return list
-    }
+    /** 当前游戏的全部模板（用户+开发者），用于整理匹配 */
+    fun allTemplates(): List<ItemTemplate> = list("user") + list("dev")
 
     /** 保存一张 Shizuku 截屏到缓存（临时） */
     fun saveScreenshot(bmp: Bitmap): File {
@@ -67,7 +61,7 @@ class TemplateRepository(private val context: Context) {
         return f
     }
 
-    /** 清空截图缓存（退出时调用，防占用空间）；模板目录不清理 */
+    /** 清空截图缓存（退出时调用）；模板目录不清理 */
     fun clearScreenshotCache() {
         val d = screenshotCacheDir
         if (d.exists()) d.listFiles()?.forEach { it.delete() }

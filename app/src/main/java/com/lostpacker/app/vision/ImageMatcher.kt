@@ -3,6 +3,7 @@ package com.lostpacker.app.vision
 import android.graphics.Bitmap
 import kotlin.math.min
 import kotlin.math.sqrt
+import kotlin.math.max
 
 /**
  * 轻量级图像识别：
@@ -66,5 +67,29 @@ object ImageMatcher {
             if (a > 200 && lum > 60f) opaque++
         }
         return opaque.toFloat() / px.size
+    }
+
+    /**
+     * 图中找图：在 [big] 中滑动窗口查找 [templ]，返回最佳左上角坐标与相似度。
+     * 步长为模板宽的一半（兼顾速度与命中）。找不到返回 null。
+     */
+    fun locateTemplate(big: Bitmap, templ: Bitmap, threshold: Float = 0.8f): Pair<android.graphics.Point, Float>? {
+        if (big.width < templ.width || big.height < templ.height) return null
+        val tfp = fingerprint(templ)
+        val step = max(1, templ.width / 2)
+        var best: Pair<android.graphics.Point, Float>? = null
+        var x = 0
+        while (x + templ.width <= big.width) {
+            var y = 0
+            while (y + templ.height <= big.height) {
+                val win = Bitmap.createBitmap(big, x, y, templ.width, templ.height)
+                val s = similarity(fingerprint(win), tfp)
+                win.recycle()
+                if (s > threshold && (best == null || s > best!!.second)) best = android.graphics.Point(x, y) to s
+                y += step
+            }
+            x += step
+        }
+        return best
     }
 }

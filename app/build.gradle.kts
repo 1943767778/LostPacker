@@ -11,8 +11,8 @@ android {
         applicationId = "com.lostpacker.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.4.0"
+        versionCode = 6
+        versionName = "2.0.0"
     }
 
     signingConfigs {
@@ -53,4 +53,7 @@ dependencies {
 
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+
+    // 离线文字识别：读取物品堆叠数量（图标右下角数字）
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }

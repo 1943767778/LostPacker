@@ -28,4 +28,17 @@ object TouchInjector {
         )
         return r.exitCode == 0
     }
+
+    /**
+     * 真人式双击：两下点击间隔约 110ms（不快不慢）。
+     * 用于失控进化中“把背包物品移入箱子/双击箱子物品取回”。
+     * 只能在后台线程调用（内部有短暂 sleep）。
+     */
+    fun doubleTap(x: Int, y: Int): Boolean {
+        val ok1 = ShizukuSupport.exec("input", "tap", x.toString(), y.toString()).exitCode == 0
+        try { Thread.sleep(110) } catch (e: InterruptedException) {}
+        val ok2 = ShizukuSupport.exec("input", "tap", x.toString(), y.toString()).exitCode == 0
+        try { Thread.sleep(70) } catch (e: InterruptedException) {}
+        return ok1 && ok2
+    }
 }

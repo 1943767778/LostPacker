@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -154,15 +155,21 @@ class CropView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
 
     /** 返回源图上按框裁剪出的图标；未画框或尺度过小时返回 null */
     fun selectedBitmap(): Bitmap? {
+        val r = selectedRect() ?: return null
+        val bmp = source ?: return null
+        return Bitmap.createBitmap(bmp, r.left, r.top, r.width(), r.height())
+    }
+
+    /** 返回源图坐标下的框选矩形；未画框或过小返回 null */
+    fun selectedRect(): Rect? {
         val bmp = source ?: return null
         if (boxL < 0) return null
         val l = min(boxL, boxR).toInt().coerceIn(0, bmp.width)
         val t = min(boxT, boxB).toInt().coerceIn(0, bmp.height)
         val r = max(boxL, boxR).toInt().coerceIn(0, bmp.width)
         val b = max(boxT, boxB).toInt().coerceIn(0, bmp.height)
-        val w = r - l; val h = b - t
-        if (w <= 1 || h <= 1) return null
-        return Bitmap.createBitmap(bmp, l, t, w, h)
+        if (r - l <= 1 || b - t <= 1) return null
+        return Rect(l, t, r, b)
     }
 
     fun clearBox() { boxL = -1f; invalidate() }

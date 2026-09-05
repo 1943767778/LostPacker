@@ -85,7 +85,12 @@ class MainActivity : AppCompatActivity() {
             log("请先授予悬浮窗权限")
             checkBasePermissions(); return
         }
-        if (!ShizukuSupport.isAvailable()) { log("请先启动 Shizuku"); return }
+        if (!ShizukuSupport.isAvailable()) { log("Shizuku 未运行，请先在桌面启动"); return }
+        if (!ShizukuSupport.isGranted()) {
+            log("未授权 Shizuku，先弹出授权请求")
+            requestShizuku()
+            return
+        }
         val intent = Intent(this, FloatWindowService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
