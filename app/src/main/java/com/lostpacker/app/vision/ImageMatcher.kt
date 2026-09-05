@@ -70,26 +70,77 @@ object ImageMatcher {
     }
 
     /**
-     * 图中找图：在 [big] 中滑动窗口查找 [templ]，返回最佳左上角坐标与相似度。
-     * 步长为模板宽的一半（兼顾速度与命中）。找不到返回 null。
+     * 图中找图：在大图 [big] 中找小图 [templ]。
+     * 用归一化互相关(NCC)逐窗口扫描（等比缩小加速、步进逐格），
+     * 要求两张图为同一比例（同一次游戏截图里框出时效果最好）。
+     * 返回大图坐标下模板中心点 + 相似度(0..1)，越高越像。
      */
-    fun locateTemplate(big: Bitmap, templ: Bitmap, threshold: Float = 0.8f): Pair<android.graphics.Point, Float>? {
+    fun locateTemplate(big: Bitmap, templ: Bitmap, threshold: Float = 0.6f): Pair<android.graphics.Point, Float>? {
         if (big.width < templ.width || big.height < templ.height) return null
-        val tfp = fingerprint(templ)
-        val step = max(1, templ.width / 2)
-        var best: Pair<android.graphics.Point, Float>? = null
-        var x = 0
-        while (x + templ.width <= big.width) {
-            var y = 0
-            while (y + templ.height <= big.height) {
-                val win = Bitmap.createBitmap(big, x, y, templ.width, templ.height)
-                val s = similarity(fingerprint(win), tfp)
-                win.recycle()
-                if (s > threshold && (best == null || s > best!!.second)) best = android.graphics.Point(x, y) to s
-                y += step
+        val s = if (big.width > 960) 960f / big.width else 1f
+        val bw = max(1, (big.width * s).toInt()); val bh = max(1, (big.height * s).toInt())
+        val tw = max(1, (templ.width * s).toInt()); val th = max(1, (templ.height * s).toInt())
+        if (tw < 6 || th < 6 || bw < tw || bh < th) return null
+        val bigS = Bitmap.createScaledBitmap(big, bw, bh, true)
+        val tplS = Bitmap.createScaledBitmap(templ, tw, th, true)
+        val bg = gray(bigS); bigS.recycle()
+        val tg = gray(tplS); tplS.recycle()
+        val n = tg.size
+        val tMean = tg.sum() / n
+        var tVar = 0f; for (v in tg) { val d = v - tMean; tVar += d * d }
+        val tStd = sqrt(tVar)
+
+        val step = max(2, tw / 4)
+        var bestNcc = -1f; var bestX = -1; var bestY = -1
+        var by = 0
+        while (by + th <= bh) {
+            var bx = 0
+            while (bx + tw <= bw) {
+                var wSum = 0f; var cross = 0f
+                for (ty in 0 until th) {
+                    val baseR = (by + ty) * bw + bx
+                    val bt = ty * tw
+                    for (tx in 0 until tw) {
+                        val g = bg[baseR + tx]
+                        wSum += g; cross += g * tg[bt + tx]
+                    }
+                }
+                val wMean = wSum / n
+                val num = cross - n * wMean * tMean
+                val ncc = if (tStd > 1e-3f) num / (tStd * estWindowStd(bg, bw, bx, by, tw, th, n)) else 0f
+                if (ncc > bestNcc) { bestNcc = ncc; bestX = bx; bestY = by }
+                bx += step
             }
-            x += step
+            by += step
         }
-        return best
+        if (bestX < 0 || bestNcc < threshold) return null
+        val cx = ((bestX + tw / 2) / s).toInt().coerceIn(0, big.width - 1)
+        val cy = ((bestY + th / 2) / s).toInt().coerceIn(0, big.height - 1)
+        return android.graphics.Point(cx, cy) to bestNcc.coerceIn(0f, 1f)
+    }
+
+    /** 窗口标准差：sum((g-wMean)^2)/n 的开方（用 sum(g^2) 计算，需两次扫描窗口） */
+    private fun estWindowStd(bg: FloatArray, bw: Int, bx: Int, by: Int, tw: Int, th: Int, n: Int): Float {
+        var sum = 0f; var sumsq = 0f
+        for (ty in 0 until th) {
+            val base = (by + ty) * bw + bx
+            for (tx in 0 until tw) { val g = bg[base + tx]; sum += g; sumsq += g * g }
+        }
+        val mean = sum / n
+        val var1 = (sumsq - n * mean * mean).coerceAtLeast(0f)
+        return sqrt(var1)
+    }
+
+    private fun gray(bmp: Bitmap): FloatArray {
+        val w = bmp.width; val h = bmp.height
+        val px = IntArray(w * h)
+        bmp.getPixels(px, 0, w, 0, 0, w, h)
+        val out = FloatArray(w * h)
+        for (i in px.indices) {
+            val c = px[i]
+            val r = (c shr 16) and 0xFF; val g = (c shr 8) and 0xFF; val bl = c and 0xFF
+            out[i] = (0.299f * r + 0.587f * g + 0.114f * bl) / 255f
+        }
+        return out
     }
 }

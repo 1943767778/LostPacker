@@ -600,7 +600,7 @@ class FloatWindowService : Service() {
             if (imgBig == null || imgTpl == null) { setStatus("请先选大图和小图"); return@makeBtn }
             Thread {
                 setStatus("正在搜索图中目标…")
-                val hit = com.lostpacker.app.vision.ImageMatcher.locateTemplate(imgBig!!, imgTpl!!, 0.75f)
+                val hit = com.lostpacker.app.vision.ImageMatcher.locateTemplate(imgBig!!, imgTpl!!)
                 handler.post {
                     if (hit != null) setStatus("找到！位于 (${hit.first.x},${hit.first.y})，相似度 ${"%.2f".format(hit.second)}")
                     else setStatus("未找到匹配目标")
@@ -706,10 +706,63 @@ class FloatWindowService : Service() {
     private fun prefPanelX(): Int { val px = Prefs.panelX(); return if (px in 0..screenWidth()) px else (screenWidth() - ThemeConfig.dp(312).toInt()) / 2 }
     private fun prefPanelY(): Int { val py = Prefs.panelY(); return if (py in 0..screenHeight()) py else ThemeConfig.dp(80).toInt() }
 
-    // ============ 框选/截图：选择图片来源 ============
+    // ============ 框选：区域直接出画布，截图相关只用于存模板/工具图 ============
     private fun beginCrop(mode: CropMode) {
-        cropMode = mode
-        chooseImageSource()
+        when (mode) {
+            CropMode.SET_BACKPACK -> startRegionSelect("backpack")
+            CropMode.SET_BOX -> startRegionSelect("box")
+            CropMode.SET_SPLIT -> startRegionSelect("split")
+            else -> { cropMode = mode; chooseImageSource() }
+        }
+    }
+
+    /** 实时画布框选区域（不需要截屏）：直接在当前游戏画面上拖矩形。 */
+    private fun startRegionSelect(kind: String) {
+        if (selector != null) return
+        hidePanelForOverlay()
+        val game = currentGame
+        val cv = RegionSelectorView(this).apply { gridCols = Prefs.cols(game); gridRows = Prefs.rows(game) }
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            background = ThemeConfig.rounded(0xCC000000.toInt(), 14)
+            setPadding(ThemeConfig.dp(10).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(10).toInt(), ThemeConfig.dp(8).toInt())
+        }
+        val cancel = makeCropBtn("取消")
+        val ok = makeCropBtn(if (kind == "backpack") "确定(背包)" else if (kind == "box") "确定(箱子)" else "确定(拆分)")
+        cancel.setBackground(ThemeConfig.stroked(0xFF888888.toInt(), 8, 1))
+        ok.background = ThemeConfig.rounded(0xFF4FC3F7.toInt(), 8)
+        cancel.setOnClickListener { teardownRegion() }
+        ok.setOnClickListener {
+            val r = cv.lastRect()
+            if (r == null) { setStatus("请先在画布上拖一个矩形"); return@setOnClickListener }
+            applyRegion(r, kind)
+            teardownRegion(); rebuildPanel(); selectTab(1)
+        }
+        bar.addView(cancel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bar.addView(ok, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val root = FrameLayout(this)
+        root.addView(cv)
+        root.addView(bar, FrameLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        val lp = WindowManager.LayoutParams(MATCH_PARENT, MATCH_PARENT, overlayType, FLAG_NOT_FOCUSABLE or FLAG_NOT_TOUCH_MODAL, PixelFormat.TRANSLUCENT)
+        wm.addView(root, lp)
+        selector = root
+        setStatus("拖拽框出区域，点确定保存；点取消重来")
+    }
+
+    private fun teardownRegion() {
+        removeView(selector); selector = null
+        rebuildPanel()
+    }
+
+    private fun applyRegion(rect: Rect, kind: String) {
+        val game = currentGame
+        when (kind) {
+            "backpack" -> Prefs.setRegion(game, RegionConfig(rect, Prefs.cols(game), Prefs.rows(game)).serialize())
+            "box" -> Prefs.setBoxRegion(game, RegionConfig(rect, Prefs.cols(game), Prefs.rows(game)).serialize())
+            "split" -> Prefs.setSplitRegion(game, RegionConfig(rect, Prefs.cols(game), Prefs.rows(game)).serialize())
+        }
+        setStatus(if (kind == "backpack") "已设背包区域" else if (kind == "box") "已设箱子区域" else "已设拆分区域")
     }
 
     /** 弹窗：上传图片并框区 / 截图并框区（选择后自动销毁该弹窗） */

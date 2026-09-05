@@ -8,7 +8,6 @@ import android.graphics.Rect
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
-import com.lostpacker.app.prefs.Prefs
 
 /**
  * 全屏框选视图：手指拖拽画矩形，松开后回调所选区域。
@@ -20,6 +19,10 @@ class RegionSelectorView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     var onRegionSelected: ((Rect) -> Unit)? = null
+
+    /** 网格行列数（当前游戏的背包格子），用于预览 */
+    var gridCols = 8
+    var gridRows = 8
 
     private val borderPaint = Paint().apply {
         style = Paint.Style.STROKE
@@ -58,15 +61,15 @@ class RegionSelectorView @JvmOverloads constructor(
             canvas.drawRect(l, t, r, b, borderPaint)
             drawGrid(canvas, l, t, r, b)
             canvas.drawText(
-                "(${l.toInt()},${t.toInt()}) ${(r - l).toInt()}x${(b - t).toInt()}  | ${Prefs.cols()}x${Prefs.rows()} 格",
+                "(${l.toInt()},${t.toInt()}) ${(r - l).toInt()}x${(b - t).toInt()}  | ${gridCols}x${gridRows} 格",
                 l + 6, if (t > 30) t - 8 else b + 26, textPaint
             )
         }
     }
 
     private fun drawGrid(canvas: Canvas, l: Float, t: Float, r: Float, b: Float) {
-        val cols = Prefs.cols()
-        val rows = Prefs.rows()
+        val cols = gridCols
+        val rows = gridRows
         if (cols <= 0 || rows <= 0) return
         val cw = (r - l) / cols
         val ch = (b - t) / rows
@@ -100,5 +103,15 @@ class RegionSelectorView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    /** 读取最近一次框选出来的区域（屏坐标）；未框或过小返回 null */
+    fun lastRect(): Rect? {
+        val l = minOf(startX, endX).toInt()
+        val t = minOf(startY, endY).toInt()
+        val r = maxOf(startX, endX).toInt()
+        val b = maxOf(startY, endY).toInt()
+        if (r - l > 20 && b - t > 20) return Rect(l, t, r, b)
+        return null
     }
 }
