@@ -48,6 +48,11 @@ class MainActivity : AppCompatActivity() {
 
         checkBasePermissions()
         refreshStatus()
+
+        // binder 异步到达后刷新一次状态（避免启动时提前调用权限检查闪退）
+        rikka.shizuku.Shizuku.addBinderReceivedListenerSticky {
+            runOnUiThread { refreshStatus() }
+        }
     }
 
     private fun refreshStatus() {

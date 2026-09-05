@@ -31,6 +31,20 @@
             android:layout_marginTop="20dp"
             android:text="上传图片作为模板" />
 
+        <Button
+            android:id="@+id/btnCaptureCrop"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Shizuku 截图 → 框选图标" />
+
+        <Button
+            android:id="@+id/btnExport"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="导出模板（命名后上传）" />
+
         <TextView
             android:id="@+id/tvTemplates"
             android:layout_width="match_parent"

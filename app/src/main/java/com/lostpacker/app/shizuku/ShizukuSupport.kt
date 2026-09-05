@@ -8,8 +8,20 @@ object ShizukuSupport {
     fun isAvailable(): Boolean =
         Shizuku.pingBinder()
 
-    fun isGranted(): Boolean =
-        Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+    /**
+     * Shizuku 权限是否已授予。
+     * 注意：binder 是异步到达的，binder 未就绪时 checkSelfPermission 会抛
+     * IllegalStateException("binder haven't been received")，这里做防御性处理，
+     * 避免 App 启动阶段闪退；binder 到达后由监听器刷新。
+     */
+    fun isGranted(): Boolean {
+        if (!Shizuku.pingBinder()) return false
+        return try {
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     /** 请求 Shizuku 权限（异步，结果走 requestPermissionResultReceiver） */
     fun requestPermission(code: Int) {

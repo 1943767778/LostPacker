@@ -59,7 +59,7 @@ class FloatWindowService : Service() {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.createNotificationChannel(NotificationChannel(channelId, "理包器悬浮窗", NotificationManager.IMPORTANCE_LOW))
             val n = Notification.Builder(this, channelId)
-                .setContentTitle("失空进化自动理包器正在运行")
+                .setContentTitle("自动理包器正在运行")
                 .setSmallIcon(R.drawable.ic_launcher)
                 .build()
             startForeground(1, n)

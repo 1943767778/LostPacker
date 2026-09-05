@@ -41,10 +41,10 @@ data class Cell(
     val fingerprint: FloatArray
 )
 
-/** 模板别名：把上传的图标图片当成一种物品 */
+/** 模板别名：把上传的图标图片当成一种物品；assets 预制的模板 file 为 null */
 data class ItemTemplate(
     val id: String,
     val label: String,
-    val file: java.io.File,
+    val file: java.io.File? = null,
     val fingerprint: FloatArray
 )

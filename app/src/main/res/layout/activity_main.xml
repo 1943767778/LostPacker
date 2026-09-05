@@ -13,7 +13,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="失空进化自动理包器"
+            android:text="自动理包器"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -21,7 +21,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="@string/app_name"
+            android:text="悬浮窗框选 + Shizuku 触控 + 图像识别自动整理背包"
             android:textSize="14sp"
             android:alpha="0.7" />
 

@@ -35,6 +35,7 @@
         </activity>
 
         <activity android:name=".dev.DevToolsActivity" />
+        <activity android:name=".dev.IconCropActivity" />
 
         <service
             android:name=".overlay.FloatWindowService"
@@ -42,10 +43,20 @@
             android:foregroundServiceType="dataSync" />
 
         <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
             android:enabled="true"
-            android:exported="false"
+            android:exported="true"
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
