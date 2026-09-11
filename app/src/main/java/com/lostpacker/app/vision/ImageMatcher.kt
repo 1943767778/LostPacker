@@ -1,9 +1,11 @@
 package com.lostpacker.app.vision
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import kotlin.math.min
 import kotlin.math.sqrt
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * 轻量级图像识别：
@@ -164,6 +166,47 @@ object ImageMatcher {
 
         b.recycle()
         t.recycle()
+        return best
+    }
+
+    /**
+     * 区域限定的原分辨率快速定位（给礼包器等“在指定背包区域内找小图”用，保证 <5s）。
+     * 直接在 [region]（原图坐标）上做多尺度 NCC：区域有界可不降采样，
+     * 从根源上消除扁平降采样对文本细笔画的错位；亦可兼容小图标按比例缩放。
+     * 返回原图坐标下的 [Match]，未命中返回 null。
+     */
+    fun locateInRegion(big: Bitmap, templ: Bitmap, region: Rect, threshold: Float = 0.6f): Match? {
+        if (big.isRecycled || templ.isRecycled) return null
+        val tW = templ.width; val tH = templ.height
+        if (tW < 4 || tH < 4) return null
+        val ox = region.left.coerceIn(0, big.width - 1)
+        val oy = region.top.coerceIn(0, big.height - 1)
+        val ow = min(region.width(), big.width - ox)
+        val oh = min(region.height(), big.height - oy)
+        if (ow < tW + 2 || oh < tH + 2) return null
+        val b = big.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+        val sub = Bitmap.createBitmap(b, ox, oy, ow, oh)
+        val bg = grad(sub)
+        sub.recycle(); b.recycle()
+
+        // 围绕 1.0 的少量比例即可：区域内小图标一般就是原尺寸或接近
+        val scales = floatArrayOf(0.85f, 0.95f, 1.0f, 1.05f, 1.15f, 1.3f)
+        var best: Match? = null
+        for (f in scales) {
+            val tw = max(4, (tW * f).roundToInt())
+            val th = max(4, (tH * f).roundToInt())
+            if (tw > ow || th > oh) continue
+            val tplS = Bitmap.createScaledBitmap(templ, tw, th, true)
+            val tg = grad(tplS)
+            if (tplS !== templ) tplS.recycle()
+            val res = scanBest(bg, ow, oh, tg, tw, th) ?: continue
+            val x = ox + res[0].toInt() + tw / 2
+            val y = oy + res[1].toInt() + th / 2
+            val score = res[2].coerceIn(0f, 1f)
+            val cand = Match(x, y, tw, th, score)
+            if (best == null || cand.score > best!!.score) best = cand
+        }
+        if (best == null || best!!.score < threshold) return null
         return best
     }
 
