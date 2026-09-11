@@ -18,7 +18,8 @@ class PickerActivity : ComponentActivity() {
     private val getImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         val bmp = if (uri != null) decode(uri) else null
         SnapshotHolder.finishPick(bmp)
-        finish()
+        // 移除整个(独立的)选择任务，避免返回到本 App 主界面，直接回到选择前的游戏页
+        finishAndRemoveTask()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

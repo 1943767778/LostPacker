@@ -140,6 +140,8 @@ class FloatWindowService : Service() {
 
     // ============ 圆点气泡 ============
     private fun showBubble() {
+        // 防御：确保不会重复添加气泡（否则会出现两个“理”展开按钮，其中一个拖不动）
+        if (bubble != null) { runCatching { wm.removeView(bubble) }; bubble = null; bubbleParams = null }
         val p = ThemeConfig.pal()
         val dot = TextView(this).apply {
             text = "理"; setTextColor(p.onAccent); textSize = 16f; gravity = Gravity.CENTER
@@ -156,8 +158,8 @@ class FloatWindowService : Service() {
     }
 
     // ============ 主面板 ============
-    private fun expandPanel() { removeView(bubble); bubbleParams = null; buildPanel(); wm.addView(panelView, panelParams) }
-    private fun collapsePanel() { removeView(panelView); panelParams = null; showBubble() }
+    private fun expandPanel() { removeView(bubble); bubble = null; bubbleParams = null; buildPanel(); wm.addView(panelView, panelParams) }
+    private fun collapsePanel() { removeView(panelView); panelView = null; panelParams = null; showBubble() }
 
     private fun buildPanel() {
         val p = ThemeConfig.pal()
@@ -657,13 +659,12 @@ class FloatWindowService : Service() {
         c.drawText("${hit.w}x${hit.h} 相似度 ${"%.2f".format(hit.score)}",
             l, (t - 10).coerceAtLeast(28f), tp)
 
-        val marker = ImageView(this).apply {
-            setImageBitmap(marked)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setOnClickListener { removeFindOverlay() }
+        val marker = FindPreviewView(this).apply {
+            setImage(marked)
+            onDismiss = { removeFindOverlay() }
         }
         val bar = TextView(this).apply {
-            text = "命中位置已用绿色框标注，点击图片关闭"
+            text = "双指缩放 / 拖动查看 · 轻点(几乎不动松手)收起"
             setTextColor(Color.WHITE)
             setBackgroundColor(0xCC000000.toInt())
             setPadding(ThemeConfig.dp(12).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(12).toInt(), ThemeConfig.dp(8).toInt())
@@ -849,7 +850,18 @@ class FloatWindowService : Service() {
             background = ThemeConfig.rounded(p.bgPanel, 16)
             setPadding(ThemeConfig.dp(16).toInt(), ThemeConfig.dp(16).toInt(), ThemeConfig.dp(16).toInt(), ThemeConfig.dp(14).toInt())
         }
-        card.addView(makeTextRow("选择图片来源", 16f, p.textMain, true))
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(makeTextRow("选择图片来源", 16f, p.textMain, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(TextView(this).apply {
+            text = "✕"; textSize = 14f; gravity = Gravity.CENTER
+            setTextColor(0xFFFFFFFF.toInt())
+            background = ThemeConfig.rounded(p.closeBg, 15)
+            layoutParams = LinearLayout.LayoutParams(ThemeConfig.dp(30).toInt(), ThemeConfig.dp(30).toInt())
+            setOnClickListener { removeView(dialog); dialog = null }
+        })
+        card.addView(header)
         val up = makeBtn("🖼 上传图片并框区", primary = true) {
             removeView(dialog); dialog = null
             startImagePick()
@@ -927,7 +939,10 @@ class FloatWindowService : Service() {
         cancelBtn.setBackground(ThemeConfig.stroked(0xFF888888.toInt(), 8, 1))
         allBtn.setOnClickListener { cv.selectAll() }
         okBtn.setOnClickListener { onCropConfirm(cv) }
-        cancelBtn.setOnClickListener { teardownCrop(bmp) }
+        cancelBtn.setOnClickListener {
+            teardownCrop(bmp)
+            rebuildPanel()   // 取消后必须恢复悬浮菜单，否则再也点不出来
+        }
         bar.addView(allBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(okBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(cancelBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
