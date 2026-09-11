@@ -2,6 +2,8 @@ package com.lostpacker.app.auto
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Point
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
@@ -74,15 +76,25 @@ class AutoOrganizer(
         val groups = group(cells, templates)
         log("识别到 ${cells.count{it.exists}} 个格子，共 ${groups.size} 组可合并")
         var moved = 0
+        val locateBudget = System.currentTimeMillis() + 4000L   // 区域内找小图总预算，确保 <5s
         groups.forEach { g ->
             if (stop) { finish(false, "已手动停止"); return }
+            val dst = g[0]
+            // 若该组由某个带图模板构成，用“区域内模板匹配”精确定位合并目标（<5s 兜底）
+            var dx = dst.centerX; var dy = dst.centerY
+            val label = matchLabel(dst, templates)
+            val tpl = label?.let { l -> templates.firstOrNull { it.label == l } }
+            if (tpl?.file != null && System.currentTimeMillis() < locateBudget) {
+                val p = locateInBackpack(screen, tpl, region)
+                if (p != null) { dx = p.x; dy = p.y }
+            }
             for (i in 1 until g.size) {
                 if (stop) { finish(false, "已手动停止"); return }
-                val src = g[i]; val dst = g[0]
+                val src = g[i]
                 status("合并 ${labelOf(src)} → ${labelOf(dst)}")
                 Thread.sleep(Prefs.stepDelayMs())
-                TouchInjector.drag(src.centerX, src.centerY, dst.centerX, dst.centerY, 480); moved++
-                log("拖动 (${src.centerX},${src.centerY}) → (${dst.centerX},${dst.centerY})")
+                TouchInjector.drag(src.centerX, src.centerY, dx, dy, 480); moved++
+                log("拖动 (${src.centerX},${src.centerY}) → ($dx,$dy)")
             }
         }
         finish(true, "整理完成，共执行 ${moved} 次拖动")
@@ -258,6 +270,15 @@ class AutoOrganizer(
 
     private fun labelOf(c: Cell) = "格${c.index + 1}"
     private fun Touchtap(x: Int, y: Int) { TouchInjector.tap(x, y) }
+
+    /** 用区域限定的原分辨率模板匹配，在背包区域 [region] 内定位模板小图中心（<5s）。 */
+    private fun locateInBackpack(screen: Bitmap, tpl: ItemTemplate, region: RegionConfig): Point? {
+        if (tpl.file == null) return null
+        val bmp = try { BitmapFactory.decodeFile(tpl.file.absolutePath) } catch (e: Exception) { null } ?: return null
+        val hit = ImageMatcher.locateInRegion(screen, bmp, region.rect, Prefs.mergeThreshold())
+        bmp.recycle()
+        return if (hit != null) Point(hit.x, hit.y) else null
+    }
 
     private fun status(m: String) { handler.post { onStatus(m) } }
     private fun log(m: String) { handler.post { onLog(m) } }
