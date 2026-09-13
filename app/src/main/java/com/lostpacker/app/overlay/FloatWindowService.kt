@@ -204,10 +204,11 @@ class FloatWindowService : Service() {
         panelView = root
         selectTab(currentTab)
 
-        // 去掉 NOT_FOCUSABLE，改用 ALT_FOCUSABLE_IM：让面板内 EditText 能获焦并唤醒输入法
+        // 面板可聚焦但不设 ALT_FOCUSABLE_IM（该 flag 仅在配合 NOT_FOCUSABLE 时才启用输入法，
+        // 单独设置反而会抑制 IME）——这样面板内 EditText 获焦即可唤醒输入法
         panelParams = WindowManager.LayoutParams(
             ThemeConfig.dp(312).toInt(), ThemeConfig.dp(360).toInt(), overlayType,
-            FLAG_NOT_TOUCH_MODAL or FLAG_LAYOUT_NO_LIMITS or FLAG_ALT_FOCUSABLE_IM, PixelFormat.TRANSLUCENT
+            FLAG_NOT_TOUCH_MODAL or FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START; x = prefPanelX(); y = prefPanelY() }
     }
 
@@ -368,6 +369,11 @@ class FloatWindowService : Service() {
         row.addView(makeMiniBtn("删除", { gameDeleteConfirm(game) }), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         l.addView(row)
 
+        // 启动游戏：仅当当前选择的是默认游戏“失控进化”时显示
+        if (game == Prefs.DEFAULT_GAME) {
+            l.addView(makeBtn("🚀 启动失控进化", true) { launchGame() })
+        }
+
         pillTitle(l, "ℹ 运行信息")
         statusTv = makeTextRow(lastStatus).also { l.addView(it) }
         permTv = TextView(this).apply { textSize = 12f; setTextColor(ThemeConfig.pal().textSub) }.also { l.addView(it) }
@@ -384,6 +390,21 @@ class FloatWindowService : Service() {
 
     private fun updatePermLine() {
         permTv?.text = "Shizuku: ${if (ShizukuSupport.isAvailable()) "已运行" else "未运行"} · 权限: ${if (ShizukuSupport.isGranted()) "已授予" else "未授予"}"
+    }
+
+    /** 启动默认游戏“失控进化”（com.tencent.rmcn） */
+    private fun launchGame() {
+        val intent = packageManager.getLaunchIntentForPackage("com.tencent.rmcn")
+        if (intent == null) { setStatus("未安装失控进化（com.tencent.rmcn）"); appendLog("✗ 启动失控进化失败：未安装"); return }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(intent)
+            setStatus("已启动失控进化")
+            appendLog("✓ 启动失控进化")
+        } catch (e: Exception) {
+            setStatus("启动失败：${e.message}")
+            appendLog("✗ 启动失控进化失败：${e.message}")
+        }
     }
 
     private fun gameNameDialog(title: String, initial: String?) {
@@ -1172,20 +1193,32 @@ class FloatWindowService : Service() {
         btns.addView(cancel); btns.addView(ok)
         card.addView(btns, LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = ThemeConfig.dp(12).toInt() })
 
-        // 可聚焦 + 允许输入法：去掉 NOT_FOCUSABLE
+        // 输入框对话框：窗口可聚焦、不设 ALT_FOCUSABLE_IM（它仅在配 NOT_FOCUSABLE 时才启用 IME，
+        // 单独设置会抑制输入法），并用 SOFT_INPUT_STATE_ALWAYS_VISIBLE 强制弹出键盘
         val lp = WindowManager.LayoutParams(
             ThemeConfig.dp(290).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT, overlayType,
-            FLAG_NOT_TOUCH_MODAL or FLAG_ALT_FOCUSABLE_IM, PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.CENTER; dimAmount = 0.4f }
+            FLAG_NOT_TOUCH_MODAL, PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER; dimAmount = 0.4f
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+        }
         wm.addView(card, lp)
         dialog = card
         handler.postDelayed({
             try {
                 input.requestFocus()
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+            } catch (e: Exception) {}
+        }, 180)
+        // 兜底：窗口已可见后仍未弹出时再补一次
+        handler.postDelayed({
+            try {
+                if (!input.hasFocus()) input.requestFocus()
                 (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
                     .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
             } catch (e: Exception) {}
-        }, 140)
+        }, 500)
     }
 
     private fun showConfirmDialog(title: String, msg: String, onOk: () -> Unit) {
