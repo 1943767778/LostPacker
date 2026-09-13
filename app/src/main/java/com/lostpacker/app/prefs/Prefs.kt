@@ -32,16 +32,28 @@ object Prefs {
     // 拆分进度条区域（失控进化超量拆分用）
     fun splitRegion(g: String): String? = sp.getString("split:$g", null)
     fun setSplitRegion(g: String, v: String) = sp.edit().putString("split:$g", v).apply()
+    // 箱子命名区（用户手动框选，OCR 读取其文字判断箱子对应分类）
+    fun namingRegion(g: String): String? = sp.getString("naming:$g", null)
+    fun setNamingRegion(g: String, v: String) = sp.edit().putString("naming:$g", v).apply()
 
     fun cols(g: String): Int = sp.getInt("cols:$g", 8)
     fun setCols(g: String, v: Int) = sp.edit().putInt("cols:$g", v).apply()
     fun rows(g: String): Int = sp.getInt("rows:$g", 8)
     fun setRows(g: String, v: Int) = sp.edit().putInt("rows:$g", v).apply()
+    // 箱子区域的行列数：与背包相互独立
+    fun boxCols(g: String): Int = sp.getInt("bcols:$g", 6)
+    fun setBoxCols(g: String, v: Int) = sp.edit().putInt("bcols:$g", v).apply()
+    fun boxRows(g: String): Int = sp.getInt("brows:$g", 6)
+    fun setBoxRows(g: String, v: Int) = sp.edit().putInt("brows:$g", v).apply()
 
     // 手动勾选用于本次整理的模板 label 集合（按游戏存）
     fun activeTpl(g: String): MutableSet<String> =
         HashSet(sp.getStringSet("atpl:$g", null) ?: emptySet())
     fun setActiveTpl(g: String, s: Set<String>) = sp.edit().putStringSet("atpl:$g", s.toSet()).apply()
+    // 被排除的模板 label 集合（文件夹式勾选中显示“减号”标记，整理时不会使用）
+    fun excludedTpl(g: String): MutableSet<String> =
+        HashSet(sp.getStringSet("xpl:$g", null) ?: emptySet())
+    fun setExcludedTpl(g: String, s: Set<String>) = sp.edit().putStringSet("xpl:$g", s.toSet()).apply()
 
     // 每游戏分类系统 JSON
     fun catsJson(g: String): String = sp.getString("cats:$g", "") ?: ""

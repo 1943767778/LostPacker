@@ -67,11 +67,11 @@ class TemplateRepository(private val context: Context, private val game: String)
         if (d.exists()) d.listFiles()?.forEach { it.delete() }
     }
 
-    /** 导出开发者素材模板 zip（命名区分游戏，供开发者预制） */
-    fun exportDevTemplates(gameName: String): File {
+    /** 导出当前游戏的全部用户模板 zip（一键备份/分享） */
+    fun exportUserTemplates(gameName: String): File {
         val safe = sanitize(gameName)
-        val zip = File(context.cacheDir, "${safe}_dev_templates.zip")
-        val files = dir("dev").listFiles { f -> f.extension.equals("png", true) || f.extension.equals("jpg", true) }
+        val zip = File(context.cacheDir, "${safe}_user_templates.zip")
+        val files = dir("user").listFiles { f -> f.extension.equals("png", true) || f.extension.equals("jpg", true) }
             ?: emptyArray()
         ZipOutputStream(zip.outputStream()).use { zos ->
             for (f in files) {
@@ -80,7 +80,7 @@ class TemplateRepository(private val context: Context, private val game: String)
                 zos.closeEntry()
             }
             zos.putNextEntry(ZipEntry("$safe/README.txt"))
-            zos.write(("开发者素材模板(${files.size}个)：\n" + files.joinToString("\n") { it.name }).toByteArray())
+            zos.write(("用户模板(${files.size}个)：\n" + files.joinToString("\n") { it.name }).toByteArray())
             zos.closeEntry()
         }
         return zip

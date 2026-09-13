@@ -74,7 +74,7 @@ class FloatWindowService : Service() {
     private var gameDropdownOpen = false
 
     // 框选/截图模式
-    private enum class CropMode { SAVE_TEMPLATE, SET_BACKPACK, SET_BOX, SET_SPLIT, PICK_IMG }
+    private enum class CropMode { SAVE_TEMPLATE, SET_BACKPACK, SET_BOX, SET_SPLIT, SET_NAMING, PICK_IMG }
     private var cropMode = CropMode.SAVE_TEMPLATE
     private var cropSlot = ""          // PICK_IMG 目标：usr/dev/A/B/BIG/TPL
     private var pickPoller: Runnable? = null
@@ -90,6 +90,7 @@ class FloatWindowService : Service() {
     private var dragDY = 0f
     private var dialogInput: EditText? = null
     private var ticker: Runnable? = null
+    private var targetOverlay: View? = null
 
     private val currentGame get() = Prefs.currentGame()
     private fun repo() = TemplateRepository(this, currentGame)
@@ -119,6 +120,7 @@ class FloatWindowService : Service() {
         removeView(selector); selector = null
         removeView(cropRoot); cropRoot = null
         removeView(dialog); dialog = null
+        removeTargetOverlay()
         SnapshotHolder.release()
         repo().clearScreenshotCache()
         super.onDestroy()
@@ -202,9 +204,10 @@ class FloatWindowService : Service() {
         panelView = root
         selectTab(currentTab)
 
+        // 去掉 NOT_FOCUSABLE，改用 ALT_FOCUSABLE_IM：让面板内 EditText 能获焦并唤醒输入法
         panelParams = WindowManager.LayoutParams(
             ThemeConfig.dp(312).toInt(), ThemeConfig.dp(360).toInt(), overlayType,
-            FLAG_NOT_FOCUSABLE or FLAG_NOT_TOUCH_MODAL or FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT
+            FLAG_NOT_TOUCH_MODAL or FLAG_LAYOUT_NO_LIMITS or FLAG_ALT_FOCUSABLE_IM, PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START; x = prefPanelX(); y = prefPanelY() }
     }
 
@@ -285,15 +288,16 @@ class FloatWindowService : Service() {
             setPadding(ThemeConfig.dp(10).toInt(), ThemeConfig.dp(4).toInt(), ThemeConfig.dp(10).toInt(), ThemeConfig.dp(4).toInt())
             textSize = 13f
             if (numeric) inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            setOnFocusChangeListener { _, focused -> setPanelFocusable(focused) }
+            setOnFocusChangeListener { v, focused ->
+                if (focused) {
+                    try {
+                        v.requestFocus()
+                        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                            .showSoftInput(v, InputMethodManager.SHOW_IMPLICIT)
+                    } catch (e: Exception) {}
+                }
+            }
         }
-    }
-
-    private fun setPanelFocusable(focusable: Boolean) {
-        val p = panelParams ?: return
-        p.flags = if (focusable) (p.flags and FLAG_NOT_FOCUSABLE.inv())
-        else (p.flags or FLAG_NOT_FOCUSABLE)
-        try { wm.updateViewLayout(panelView, p) } catch (e: Exception) {}
     }
 
     private fun makeRow(vararg texts: String): TextView = TextView(this).apply {
@@ -417,7 +421,7 @@ class FloatWindowService : Service() {
         logBuffer.append("1. 主页：选/添加/重命名/复制/删除游戏；每个游戏模板、分类、区域互相独立。\n")
         logBuffer.append("2. 整理：勾选目标模板 → 框选背包区域 → 开始整理；失控进化另需框箱子/拆分区域并选分类。\n")
         logBuffer.append("3. 模板：截图或上传图片 → 框选图标保存为用户模板；可建分类并分配目标数量。\n")
-        logBuffer.append("4. 工具：相似度对比、图中找图、开发者素材导出。\n\n")
+        logBuffer.append("4. 工具：相似度对比、图中找图、一键导出用户模板。\n\n")
     }
 
     // ============ 整理页 ============
@@ -439,32 +443,91 @@ class FloatWindowService : Service() {
             pillSub(l, "（暂无分类，可在「模板」页创建）")
         }
 
-        // 目标模板勾选（全部模板）
+        // 目标模板勾选（文件夹式：分类下物品带缩进，可勾分类、勾子项，减号=排除）
         pillTitle(l, "🎯 勾选要整理的目标模板")
         val allTpls = repo().allTemplates()
         if (allTpls.isEmpty()) {
             pillSub(l, "（暂无模板，先去「模板」页加图标）")
         } else {
-            allTpls.forEach { t ->
-                val checked = t.label in Prefs.activeTpl(game)
+            val tplLabels = allTpls.map { it.label }.toSet()
+            val cats = CategoriesStore.load(game)
+            val active = Prefs.activeTpl(game).toMutableSet()
+            val excluded = Prefs.excludedTpl(game).toMutableSet()
+
+            // 该 label 当前状态：1=勾选, -1=排除(减号), 0=未勾
+            fun stateOf(label: String): Int = when { label in active -> 1; label in excluded -> -1; else -> 0 }
+            fun setState(label: String, st: Int) {
+                when (st) { 1 -> { active.add(label); excluded.remove(label) }
+                    -1 -> { active.remove(label); excluded.add(label) }
+                    else -> { active.remove(label); excluded.remove(label) } }
+            }
+            fun saveStates() { Prefs.setActiveTpl(game, active); Prefs.setExcludedTpl(game, excluded); selectTab(1) }
+            fun mark(label: String): String = when (stateOf(label)) { 1 -> "☑"; -1 -> "⊟"; else -> "☐" }
+
+            // 分类行 + 其子项
+            val groupedLabels = HashSet<String>()
+            cats.forEach { c ->
+                val itemLabels = c.items.keys.filter { it in tplLabels }
+                groupedLabels.addAll(itemLabels)
+                val p = ThemeConfig.pal()
+                val sym = when {
+                    itemLabels.isEmpty() -> "☐"
+                    itemLabels.all { stateOf(it) == -1 } -> "⊟"
+                    itemLabels.all { stateOf(it) == 1 } -> "☑"
+                    else -> "☐"
+                }
+                val catRow = TextView(this).apply {
+                    text = "$sym  📁 ${c.name}（${itemLabels.size}项）"
+                    textSize = 13f; gravity = Gravity.CENTER_VERTICAL
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    setTextColor(p.accent)
+                    setPadding(ThemeConfig.dp(8).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(8).toInt())
+                    background = ThemeConfig.rounded(p.bgCard, 8)
+                    setOnClickListener {
+                        when {
+                            itemLabels.isEmpty() -> {}
+                            itemLabels.all { stateOf(it) == 1 } -> itemLabels.forEach { setState(it, -1) } // 全勾→全排除(减号)
+                            else -> itemLabels.forEach { setState(it, 1) } // 否则→全勾
+                        }
+                        saveStates()
+                    }
+                }
+                catRow.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = ThemeConfig.dp(3).toInt() }
+                l.addView(catRow)
+
+                itemLabels.forEach { label ->
+                    val st = stateOf(label)
+                    val itemRow = TextView(this).apply {
+                        text = "      ${mark(label)}  $label"
+                        textSize = 12f; gravity = Gravity.CENTER_VERTICAL
+                        setTextColor(if (st == 1) p.accent else if (st == -1) p.textSub else p.textMain)
+                        typeface = if (st == 1) android.graphics.Typeface.DEFAULT_BOLD else null
+                        setPadding(ThemeConfig.dp(8).toInt(), ThemeConfig.dp(6).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(6).toInt())
+                        background = ThemeConfig.rounded(if (st != 0) p.navSel else p.bgCard, 8)
+                        setOnClickListener { setState(label, if (stateOf(label) == 1) 0 else 1); saveStates() }
+                    }
+                    itemRow.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = ThemeConfig.dp(2).toInt() }
+                    l.addView(itemRow)
+                }
+            }
+
+            // 未归入任何分类的模板，直接列出
+            allTpls.filter { it.label !in groupedLabels }.forEach { t ->
+                val st = stateOf(t.label)
                 val p = ThemeConfig.pal()
                 val row = TextView(this).apply {
-                    text = (if (checked) "☑  " else "☐  ") + t.label
+                    text = "${mark(t.label)}  ${t.label}"
                     textSize = 12f; gravity = Gravity.CENTER_VERTICAL
-                    setPadding(ThemeConfig.dp(8).toInt(), ThemeConfig.dp(7).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(7).toInt())
-                    setTextColor(if (checked) p.accent else p.textMain)
-                    typeface = if (checked) android.graphics.Typeface.DEFAULT_BOLD else null
-                    background = ThemeConfig.rounded(if (checked) p.navSel else p.bgCard, 8)
-                    setOnClickListener {
-                        val cur = Prefs.activeTpl(game)
-                        if (t.label in cur) cur.remove(t.label) else cur.add(t.label)
-                        Prefs.setActiveTpl(game, cur)
-                        selectTab(1)
-                    }
+                    setPadding(ThemeConfig.dp(8).toInt(), ThemeConfig.dp(6).toInt(), ThemeConfig.dp(8).toInt(), ThemeConfig.dp(6).toInt())
+                    setTextColor(if (st == 1) p.accent else if (st == -1) p.textSub else p.textMain)
+                    typeface = if (st == 1) android.graphics.Typeface.DEFAULT_BOLD else null
+                    background = ThemeConfig.rounded(if (st != 0) p.navSel else p.bgCard, 8)
+                    setOnClickListener { setState(t.label, if (stateOf(t.label) == 1) 0 else 1); saveStates() }
                 }
                 row.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = ThemeConfig.dp(3).toInt() }
                 l.addView(row)
             }
+            pillSub(l, "提示：点分类先全勾，再点变减号=排除；子项可单独勾选")
         }
 
         // 开始/停止
@@ -477,24 +540,42 @@ class FloatWindowService : Service() {
         l.addView(makeBtn("✍️ 框选背包区域", primary = true) { beginCrop(CropMode.SET_BACKPACK) })
 
         val box = RegionConfig.parse(Prefs.boxRegion(game))
-        pillSub(l, "${if (box != null) "已框" else "未框"}选箱子区域${if (box != null) " ${box.rect.left},${box.rect.top}" else ""}")
+        pillSub(l, "${if (box != null) "已框" else "未框"}选箱子区域 · 网格 ${Prefs.boxCols(game)}x${Prefs.boxRows(game)}格")
         l.addView(makeBtn("📦 框选箱子区域（失控进化）", primary = true) { beginCrop(CropMode.SET_BOX) })
+
+        val naming = Prefs.namingRegion(game)?.let { RegionConfig.parse(it)?.rect }
+        pillSub(l, "箱子命名区：${if (naming != null) "已框 (${naming.left},${naming.top})" else "未框"}")
+        l.addView(makeBtn("🏷 框选箱子命名区（OCR 识别箱子分类）", primary = true) { beginCrop(CropMode.SET_NAMING) })
 
         val split = RegionConfig.parse(Prefs.splitRegion(game))
         pillSub(l, "${if (split != null) "已框" else "未框"}选拆分进度条区域")
         l.addView(makeBtn("🪓 框选拆分进度条区域（失控进化）", primary = true) { beginCrop(CropMode.SET_SPLIT) })
 
-        val cols = makeInput(Prefs.cols(game).toString(), "列数", true)
-        val rows = makeInput(Prefs.rows(game).toString(), "行数", true)
-        val saveBtn = makeBtn("保存行列数", false) {
+        // 背包行列数（与箱子相互独立）
+        val cols = makeInput(Prefs.cols(game).toString(), "背包列数", true)
+        val rows = makeInput(Prefs.rows(game).toString(), "背包行数", true)
+        val saveBtn = makeBtn("保存背包行列数", false) {
             val c = cols.text.toString().toIntOrNull(); val ro = rows.text.toString().toIntOrNull()
-            if (c != null && ro != null && c in 1..50 && ro in 1..50) { Prefs.setCols(game, c); Prefs.setRows(game, ro); setStatus("网格 ${c}x$ro 已保存") }
+            if (c != null && ro != null && c in 1..50 && ro in 1..50) { Prefs.setCols(game, c); Prefs.setRows(game, ro); setStatus("背包网格 ${c}x$ro 已保存") }
             else setStatus("行列数无效")
         }
         val hRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf(cols, rows).forEach { v -> v.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); hRow.addView(v) }
         l.addView(hRow)
         l.addView(saveBtn)
+
+        // 箱子行列数（与背包相互独立）
+        val bCols = makeInput(Prefs.boxCols(game).toString(), "箱子列数", true)
+        val bRows = makeInput(Prefs.boxRows(game).toString(), "箱子行数", true)
+        val bSave = makeBtn("保存箱子行列数", false) {
+            val c = bCols.text.toString().toIntOrNull(); val ro = bRows.text.toString().toIntOrNull()
+            if (c != null && ro != null && c in 1..50 && ro in 1..50) { Prefs.setBoxCols(game, c); Prefs.setBoxRows(game, ro); setStatus("箱子网格 ${c}x$ro 已保存") }
+            else setStatus("行列数无效")
+        }
+        val bRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf(bCols, bRows).forEach { v -> v.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); bRow.addView(v) }
+        l.addView(bRow)
+        l.addView(bSave)
 
         pillTitle(l, "⚙ 相似度阈值")
         val bar = SeekBar(this).apply { max = 40; progress = ((Prefs.mergeThreshold() - 0.6f) * 100).toInt() }
@@ -512,15 +593,35 @@ class FloatWindowService : Service() {
     }
 
     private fun toggleOrganize() {
-        if (organizing) { organizer?.stop(); setStatus("已停止"); organizeBtn?.text = "🚀 开始整理"; organizing = false }
+        if (organizing) { organizer?.stop(); removeTargetOverlay(); setStatus("已停止"); organizeBtn?.text = "🚀 开始整理"; organizing = false }
         else {
-            organizer = AutoOrganizer(this, currentGame, ::setStatus, ::appendLog) { ok, msg ->
+            organizer = AutoOrganizer(this, currentGame, ::setStatus, ::appendLog, ::onTargetBoxes) { ok, msg ->
                 setStatus(msg); organizeBtn?.text = "🚀 开始整理"; organizing = false
+                removeTargetOverlay()
             }
             organizer?.start()
             organizing = true
             organizeBtn?.text = "⏹ 停止整理"
+            // 开始整理后自动收起悬浮窗，让游戏画面完整露出
+            collapsePanel()
         }
+    }
+
+    /** 整理器回调：标注/清除识别目标格子（全屏绿色框，不挡触摸） */
+    private fun onTargetBoxes(rects: List<Rect>?) {
+        if (rects == null || rects.isEmpty()) { removeTargetOverlay(); return }
+        if (targetOverlay == null) {
+            val view = TargetBoxView(this)
+            val lp = WindowManager.LayoutParams(MATCH_PARENT, MATCH_PARENT, overlayType,
+                FLAG_NOT_FOCUSABLE or FLAG_NOT_TOUCH_MODAL, PixelFormat.TRANSLUCENT)
+            try { wm.addView(view, lp); targetOverlay = view } catch (e: Exception) {}
+        }
+        (targetOverlay as? TargetBoxView)?.boxes = rects
+    }
+
+    private fun removeTargetOverlay() {
+        targetOverlay?.let { runCatching { wm.removeView(it) } }
+        targetOverlay = null
     }
 
     // ============ 模板页：用户模板 + 分类 ============
@@ -632,12 +733,11 @@ class FloatWindowService : Service() {
             }.start()
         })
 
-        // 开发者素材
-        pillTitle(l, "🧰 开发者素材")
-        l.addView(makeBtn("📸/🖼 收集开发者素材（截图或上传→框选）", true) { cropMode = CropMode.SAVE_TEMPLATE; cropSlot = "dev"; chooseImageSource() })
-        val dev = repo().list("dev")
-        pillSub(l, if (dev.isEmpty()) "（暂无开发者素材）" else "已有 ${dev.size} 项素材")
-        l.addView(makeBtn("📦 导出开发者素材（命名后分享）", true) { exportDevDialog() })
+        // 模板导出（一键导出当前游戏的全部用户模板）
+        pillTitle(l, "📦 导出模板")
+        val usr = repo().list("user")
+        pillSub(l, if (usr.isEmpty()) "（暂无用户模板）" else "当前游戏共 ${usr.size} 个用户模板")
+        l.addView(makeBtn("📦 一键导出用户模板（备份/分享）", true) { exportUserTemplates() })
     }
 
     /** 全屏展示大图，并用绿色矩形+文字标注命中位置；点图片可关闭 */
@@ -722,18 +822,16 @@ class FloatWindowService : Service() {
         return slot
     }
 
-    private fun exportDevDialog() {
-        val dev = repo().list("dev")
-        if (dev.isEmpty()) { setStatus("开发者素材为空，请先收集"); return }
-        showInputDialog("导出开发者素材", "游戏名（用于区分，如：失控进化）") { name ->
-            val f = repo().exportDevTemplates(name)
-            removeView(dialog); dialog = null; dialogInput = null
-            setStatus("已生成 ${f.name}（${f.length() / 1024}KB）")
-            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
-            val intent = Intent(Intent.ACTION_SEND).apply { type = "application/zip"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            try { startActivity(Intent.createChooser(intent, "导出 $name 图标包").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            catch (e: Exception) { setStatus("未找到可分享的应用") }
-        }
+    /** 一键导出当前游戏的全部用户模板为 zip 并分享 */
+    private fun exportUserTemplates() {
+        val usr = repo().list("user")
+        if (usr.isEmpty()) { setStatus("暂无用户模板可导出"); return }
+        val f = repo().exportUserTemplates(currentGame)
+        setStatus("已生成 ${f.name}（${f.length() / 1024}KB）")
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+        val intent = Intent(Intent.ACTION_SEND).apply { type = "application/zip"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        try { startActivity(Intent.createChooser(intent, "导出 $currentGame 用户模板").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        catch (e: Exception) { setStatus("未找到可分享的应用") }
     }
 
     private fun tabSettings(l: LinearLayout) {
@@ -780,6 +878,7 @@ class FloatWindowService : Service() {
             CropMode.SET_BACKPACK -> startRegionSelect("backpack")
             CropMode.SET_BOX -> startRegionSelect("box")
             CropMode.SET_SPLIT -> startRegionSelect("split")
+            CropMode.SET_NAMING -> startRegionSelect("naming")
             else -> { cropMode = mode; chooseImageSource() }
         }
     }
@@ -789,7 +888,13 @@ class FloatWindowService : Service() {
         if (selector != null) return
         hidePanelForOverlay()
         val game = currentGame
-        val cv = RegionSelectorView(this).apply { gridCols = Prefs.cols(game); gridRows = Prefs.rows(game) }
+        val cv = RegionSelectorView(this).apply {
+            when (kind) {
+                "box" -> { gridCols = Prefs.boxCols(game); gridRows = Prefs.boxRows(game) }
+                "naming" -> { gridCols = 1; gridRows = 1 }
+                else -> { gridCols = Prefs.cols(game); gridRows = Prefs.rows(game) }
+            }
+        }
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
             background = ThemeConfig.rounded(0xCC000000.toInt(), 14)
@@ -797,7 +902,13 @@ class FloatWindowService : Service() {
         }
         val cancel = makeCropBtn("取消")
         val all = makeCropBtn("框全图")
-        val ok = makeCropBtn(if (kind == "backpack") "确定(背包)" else if (kind == "box") "确定(箱子)" else "确定(拆分)")
+        val ok = makeCropBtn(when (kind) {
+            "backpack" -> "确定(背包)"
+            "box" -> "确定(箱子)"
+            "split" -> "确定(拆分)"
+            "naming" -> "确定(命名区)"
+            else -> "确定"
+        })
         cancel.setBackground(ThemeConfig.stroked(0xFF888888.toInt(), 8, 1))
         all.background = ThemeConfig.rounded(0xFF8BC34A.toInt(), 8)
         ok.background = ThemeConfig.rounded(0xFF4FC3F7.toInt(), 8)
@@ -835,10 +946,17 @@ class FloatWindowService : Service() {
         val game = currentGame
         when (kind) {
             "backpack" -> Prefs.setRegion(game, RegionConfig(rect, Prefs.cols(game), Prefs.rows(game)).serialize())
-            "box" -> Prefs.setBoxRegion(game, RegionConfig(rect, Prefs.cols(game), Prefs.rows(game)).serialize())
+            "box" -> Prefs.setBoxRegion(game, RegionConfig(rect, Prefs.boxCols(game), Prefs.boxRows(game)).serialize())
             "split" -> Prefs.setSplitRegion(game, RegionConfig(rect, Prefs.cols(game), Prefs.rows(game)).serialize())
+            "naming" -> Prefs.setNamingRegion(game, RegionConfig(rect, 1, 1).serialize())
         }
-        setStatus(if (kind == "backpack") "已设背包区域" else if (kind == "box") "已设箱子区域" else "已设拆分区域")
+        setStatus(when (kind) {
+            "backpack" -> "已设背包区域"
+            "box" -> "已设箱子区域（${Prefs.boxCols(game)}x${Prefs.boxRows(game)}格）"
+            "split" -> "已设拆分区域"
+            "naming" -> "已设箱子命名区"
+            else -> "已保存"
+        })
     }
 
     /** 弹窗：上传图片并框区 / 截图并框区（选择后自动销毁该弹窗） */
@@ -966,6 +1084,7 @@ class FloatWindowService : Service() {
         CropMode.SET_BACKPACK -> "设为背包区域"
         CropMode.SET_BOX -> "设为箱子区域"
         CropMode.SET_SPLIT -> "设为拆分区域"
+        CropMode.SET_NAMING -> "设为命名区"
         CropMode.PICK_IMG -> "选用此图"
     }
 
@@ -975,6 +1094,7 @@ class FloatWindowService : Service() {
             CropMode.SET_BACKPACK -> saveRegion(cv, "backpack")
             CropMode.SET_BOX -> saveRegion(cv, "box")
             CropMode.SET_SPLIT -> saveRegion(cv, "split")
+            CropMode.SET_NAMING -> saveRegion(cv, "naming")
             CropMode.PICK_IMG -> pickImage(cv)
         }
     }
@@ -984,10 +1104,17 @@ class FloatWindowService : Service() {
         val game = currentGame
         when (kind) {
             "backpack" -> Prefs.setRegion(game, RegionConfig(rect, Prefs.cols(game), Prefs.rows(game)).serialize())
-            "box" -> Prefs.setBoxRegion(game, RegionConfig(rect, Prefs.cols(game), Prefs.rows(game)).serialize())
+            "box" -> Prefs.setBoxRegion(game, RegionConfig(rect, Prefs.boxCols(game), Prefs.boxRows(game)).serialize())
             "split" -> Prefs.setSplitRegion(game, RegionConfig(rect, Prefs.cols(game), Prefs.rows(game)).serialize())
+            "naming" -> Prefs.setNamingRegion(game, RegionConfig(rect, 1, 1).serialize())
         }
-        setStatus(if (kind == "backpack") "已设背包区域" else if (kind == "box") "已设箱子区域" else "已设拆分区域")
+        setStatus(when (kind) {
+            "backpack" -> "已设背包区域"
+            "box" -> "已设箱子区域"
+            "split" -> "已设拆分区域"
+            "naming" -> "已设箱子命名区"
+            else -> "已保存"
+        })
         teardownCrop(SnapshotHolder.takePicked())
         rebuildPanel(); selectTab(1)
     }

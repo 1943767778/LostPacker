@@ -20,20 +20,23 @@ import com.lostpacker.app.vision.ImageMatcher
 import com.lostpacker.app.vision.OcrReader
 
 /**
- * 自动整理背包。
+ * 自动整理背包 + 自动装箱。
  *
- * 通用模式（任何游戏，未配置箱子/未选分类）：
- *   截图→按框选背包区域网格切格→相似度把相同物品聚组→把多余堆叠拖动合并。
+ * 通用模式（未框箱子区域）：截图→按背包网格切格→相似度聚组→把多余堆叠拖动合并。
  *
- * 箱子分类模式（失控进化等，已框箱子区域 + 选中分类）：
- *   双击把背包里的目标物品移入箱子；双击把箱内非目标物品取回；
- *   通过 OCR 读堆叠数量做“达标/超量”判断，超量时先合并、再按“拆分”+进度条比例拆分、多余取回。
+ * 装箱模式（已框箱子区域）：
+ *   1) 先整理背包（合并同种堆叠），并把识别到的目标用绿色框标注出来；
+ *   2) 扫描箱子确定目标分类：
+ *        - 优先看“箱子命名区”OCR 文字，若包含某个分类名 → 用该分类；
+ *        - 否则按箱子内不同物品所属分类出现次数最多的那个分类；
+ *   3) 把该分类下的所有物品从背包双击移入箱子（自动从上往下/下往上滚动背包以遍历全部）。
  */
 class AutoOrganizer(
     private val context: Context,
     private val game: String,
     private val onStatus: (String) -> Unit,
     private val onLog: (String) -> Unit,
+    private val onTargetBoxes: (List<Rect>?) -> Unit,
     private val onFinished: (Boolean, String) -> Unit
 ) {
     private val handler = Handler(Looper.getMainLooper())
@@ -47,18 +50,15 @@ class AutoOrganizer(
         if (region == null) { finish(false, "尚未框选背包区域（整理页先框选）"); return }
 
         val boxRegion = RegionConfig.parse(Prefs.boxRegion(game))
-        val catName = Prefs.selectedCat(game)
-        val cat: Category? = CategoriesStore.load(game).firstOrNull { it.name == catName }
-        val lossMode = boxRegion != null && cat != null
+        val hasBox = boxRegion != null
+        clearTargetBoxes()
 
         Thread {
             try {
-                if (lossMode) {
-                    classifyBox(boxRegion!!, cat!!, region)
-                } else {
-                    genericOrganize(region)
-                }
+                if (hasBox) fullFlow(region, boxRegion!!)
+                else genericOrganize(region)
             } catch (e: Exception) {
+                clearTargetBoxes()
                 finish(false, "出错: ${e.message}")
             }
         }.start()
@@ -67,20 +67,45 @@ class AutoOrganizer(
     // ================== 通用整理 ==================
     private fun genericOrganize(region: RegionConfig) {
         val templates = repo.allTemplates().filter { it.label in Prefs.activeTpl(game) }
+        val moved = mergeBackpack(region, templates)
+        finish(true, "整理完成，共执行 $moved 次拖动")
+    }
+
+    // ================== 装箱流程 ==================
+    private fun fullFlow(inv: RegionConfig, box: RegionConfig) {
+        val activeTemplates = repo.allTemplates().filter { it.label in Prefs.activeTpl(game) }
+        val allTemplates = repo.allTemplates()
+        status("第 1 步：整理背包（合并堆叠）…")
+        val moved = mergeBackpack(inv, activeTemplates)
+        status("第 2 步：扫描箱子确定分类…")
+        val target = resolveCategory(inv, box, allTemplates)
+        if (target == null) { clearTargetBoxes(); finish(true, "背包整理完成（$moved 次拖动），但无法确定箱子分类，未装箱"); return }
+        log("箱子分类判定为「$target」")
+        moveCategoryToBox(inv, box, allTemplates, target)
+        clearTargetBoxes()
+        finish(true, "整理+装箱完成：背包 $moved 次合并，箱子分类「$target」")
+    }
+
+    /** 整理背包：把识别到的同种堆叠合并，并把命中的格子用绿框标注出来。 */
+    private fun mergeBackpack(region: RegionConfig, templates: List<ItemTemplate>): Int {
         if (templates.isNotEmpty())
             log("本次用 ${templates.size} 个模板：${templates.joinToString(","){it.label}}")
         status("正在截图…")
-        val screen = ScreenCapturer.capture() ?: run { finish(false,"截图失败，请检查 Shizuku 权限"); return }
+        val screen = ScreenCapturer.capture() ?: run { finish(false,"截图失败，请检查 Shizuku 权限"); return 0 }
         status("识别背包格子…")
         val cells = buildCells(screen, region)
         val groups = group(cells, templates)
         log("识别到 ${cells.count{it.exists}} 个格子，共 ${groups.size} 组可合并")
+
+        // 标注识别出的目标格子
+        val targetCells = cells.filter { it.exists && matchLabel(it, templates) != null }
+        if (targetCells.isNotEmpty()) showTargetBoxes(targetCells.map { cellRect(it, region) })
+
         var moved = 0
-        val locateBudget = System.currentTimeMillis() + 4000L   // 区域内找小图总预算，确保 <5s
+        val locateBudget = System.currentTimeMillis() + 4000L
         groups.forEach { g ->
-            if (stop) { finish(false, "已手动停止"); return }
+            if (stop) { clearTargetBoxes(); finish(false, "已手动停止"); return moved }
             val dst = g[0]
-            // 若该组由某个带图模板构成，用“区域内模板匹配”精确定位合并目标（<5s 兜底）
             var dx = dst.centerX; var dy = dst.centerY
             val label = matchLabel(dst, templates)
             val tpl = label?.let { l -> templates.firstOrNull { it.label == l } }
@@ -89,7 +114,7 @@ class AutoOrganizer(
                 if (p != null) { dx = p.x; dy = p.y }
             }
             for (i in 1 until g.size) {
-                if (stop) { finish(false, "已手动停止"); return }
+                if (stop) { clearTargetBoxes(); finish(false, "已手动停止"); return moved }
                 val src = g[i]
                 status("合并 ${labelOf(src)} → ${labelOf(dst)}")
                 Thread.sleep(Prefs.stepDelayMs())
@@ -97,99 +122,88 @@ class AutoOrganizer(
                 log("拖动 (${src.centerX},${src.centerY}) → ($dx,$dy)")
             }
         }
-        finish(true, "整理完成，共执行 ${moved} 次拖动")
+        return moved
     }
 
-    // ================== 失控进化：箱子分类 ==================
-    private fun classifyBox(box: RegionConfig, cat: Category, inv: RegionConfig) {
-        val templates = repo.allTemplates()
-        val keep = cat.items
-        log("箱子分类：${box.rect.toShortString()}，分类「${cat.name}」，目标：${keep}")
-        val maxRounds = 6
+    /** 确定箱子对应的目标分类：优先命名区 OCR，其次按箱内不同物品所属分类票数最多。 */
+    private fun resolveCategory(inv: RegionConfig, box: RegionConfig, templates: List<ItemTemplate>): String? {
+        val cats = CategoriesStore.load(game)
+        if (cats.isEmpty()) { log("尚未创建任何分类，无法装箱"); return null }
+        val screen = ScreenCapturer.capture() ?: run { finish(false, "截图失败"); return null }
 
-        for (round in 1..maxRounds) {
-            if (stop) { finish(false, "已手动停止"); return }
-            status("第 $round 轮扫描箱子…")
-            val screen = ScreenCapturer.capture() ?: run { finish(false, "截图失败"); return }
-            val boxCells = buildCells(screen, box)
-            val invCells = buildCells(screen, inv)
-            var acted = false
-
-            // 1) 箱内有非目标物品 → 双击取回
-            for (c in boxCells) {
-                if (stop) { finish(false, "已手动停止"); return }
-                if (!c.exists) continue
-                val label = matchLabel(c, templates)
-                if (label == null || label !in keep) {
-                    log("取回：箱内 ${labelOf(c)}（${label ?: "未知"}）非目标 → 背包")
-                    TouchInjector.doubleTap(c.centerX, c.centerY); acted = true
+        // 1) 命名区 OCR：文字里含分类名则直接采用
+        val naming = Prefs.namingRegion(game)?.let { RegionConfig.parse(it)?.rect }
+        if (naming != null) {
+            val text = OcrReader.readText(screen, naming).trim()
+            if (text.isNotEmpty()) {
+                for (c in cats) if (text.contains(c.name)) {
+                    log("箱子命名区识别到「$text」，包含分类「${c.name}」")
+                    return c.name
                 }
+                log("命名区文字「$text」未匹配到任何分类名，改用箱内物品票选")
             }
-
-            // 2) 每个目标物品：按数量“达标/超量”处理
-            for ((label, target) in keep) {
-                if (stop) { finish(false, "已手动停止"); return }
-                val stacks = boxCells.filter { it.exists && matchLabel(it, templates) == label }
-                val total = stacks.sumOf { countOf(it, screen, box) ?: 1 }
-                if (total < target) {
-                    // 达标：从背包双击移入，直到总数达标
-                    var got = total
-                    val invStacks = invCells.filter { it.exists && matchLabel(it, templates) == label }
-                    for (s in invStacks) {
-                        if (got >= target) break
-                        if (stop) { finish(false, "已手动停止"); return }
-                        val c = countOf(s, screen, inv) ?: 1
-                        log("移入：背包 ${labelOf(s)}($c) 双击 → 箱子")
-                        TouchInjector.doubleTap(s.centerX, s.centerY); got += c; acted = true
-                    }
-                    if (got < target) log("⚠ $label 仍不足目标（$got<$target）")
-                } else if (total > target) {
-                    reduceBoxExcess(label, target, stacks, screen, box); acted = true
-                }
-            }
-
-            if (!acted) { log("第 $round 轮无操作，分类完成"); break }
-            if (round == maxRounds) log("已达最大轮次，请人工检查")
         }
-        finish(true, "箱子分类流程结束")
+
+        // 2) 票选：箱内每个被识别的不同物品，给其所属分类 +1（同种物品无论多少组只算一次）
+        val boxCells = buildCells(screen, box)
+        val votes = LinkedHashMap<String, Int>()
+        val seen = HashSet<String>()
+        for (c in boxCells) {
+            if (stop) return null
+            if (!c.exists) continue
+            val label = matchLabel(c, templates) ?: continue
+            if (label in seen) continue
+            seen.add(label)
+            for (cat in cats) if (label in cat.items) votes[cat.name] = (votes[cat.name] ?: 0) + 1
+        }
+        if (votes.isEmpty()) { log("箱子内没有识别出属于已知分类的物品，无法确定分类"); return null }
+        log("箱内物品票选分类：$votes")
+        return votes.maxByOrNull { it.value }?.key
     }
 
-    /** 超量：先合并同种堆栈，再按“拆分”进度条比例拆分到目标数，多余取回。 */
-    private fun reduceBoxExcess(label: String, target: Int, stacks: List<Cell>, screen: Bitmap, box: RegionConfig) {
-        if (stacks.isEmpty()) return
-        // 尝试把同种堆栈拖到第一个上合并
-        val first = stacks.first()
-        for (i in 1 until stacks.size) {
+    /** 把 [targetCat] 分类下的所有物品从背包双击移入箱子，并自动滚动背包遍历全部。 */
+    private fun moveCategoryToBox(inv: RegionConfig, box: RegionConfig, templates: List<ItemTemplate>, targetCat: String) {
+        val cat = CategoriesStore.load(game).firstOrNull { it.name == targetCat } ?: run { log("分类「$targetCat」不存在"); return }
+        val targetLabels = cat.items.keys.toSet()
+        val maxPasses = 5
+        var totalMoved = 0
+        for (pass in 0 until maxPasses) {
             if (stop) return
-            log("合并：箱子 ${labelOf(first)} + ${labelOf(stacks[i])}")
-            TouchInjector.drag(stacks[i].centerX, stacks[i].centerY, first.centerX, first.centerY, 480)
-            Thread.sleep(Prefs.stepDelayMs())
-        }
-        Thread.sleep(Prefs.stepDelayMs())
-        val single = countOf(first, screen, box) ?: 1
-        val split = RegionConfig.parse(Prefs.splitRegion(game))
-        if (split != null) {
-            // 点选该堆栈 → 全屏找“拆分”按钮 → 点击 → 在进度条比例位置点一下
-            Touchtap(first.centerX, first.centerY)
-            Thread.sleep(350)
-            val fresh = ScreenCapturer.capture() ?: run { log("⚠ 拆分前重截图失败"); return }
-            val p = OcrReader.findText(fresh, "拆分")
-            if (p != null) {
-                log("点击“拆分”（${p.x},${p.y}）")
-                TouchInjector.tap(p.x, p.y)
-                Thread.sleep(450)
-                val frac = (target.toFloat() / single).coerceIn(0.02f, 0.98f)
-                val x = split.rect.left + (split.rect.width() * frac).toInt()
-                val y = split.rect.centerY()
-                log("拆分 ${label}：$target/$single，进度条比例 ${"%.0f".format(frac * 100)}%")
-                TouchInjector.tap(x.coerceIn(split.rect.left, split.rect.right), y)
-                Thread.sleep(400)
-                // 拆分后的多余部分会另成堆栈，交给下一轮重新扫描取回
-            } else {
-                log("⚠ 未找到“拆分”按钮，跳过拆分")
+            status("装箱第 ${pass + 1} 遍，扫描背包…")
+            val screen = ScreenCapturer.capture() ?: run { log("装箱重截图失败"); return }
+            val invCells = buildCells(screen, inv)
+            var found = 0
+            for (c in invCells) {
+                if (stop) return
+                if (!c.exists) continue
+                val label = matchLabel(c, templates) ?: continue
+                if (label in targetLabels) {
+                    log("装箱：背包 $label → 箱子")
+                    TouchInjector.doubleTap(c.centerX, c.centerY)
+                    Thread.sleep(Prefs.stepDelayMs())
+                    found++; totalMoved++
+                }
             }
-        } else {
-            log("⚠ 未框选拆分进度条区域，无法拆分；请框选后重试")
+            if (found == 0) { log("当前视野无「$targetCat」分类物品"); break }
+            if (pass == maxPasses - 1) break
+            scrollBackpack(inv, down = true)
+        }
+        // 滚回顶部，尽量恢复原状
+        scrollBackpack(inv, down = false, times = 2)
+        log("装箱完成，共双击 $totalMoved 次")
+    }
+
+    /** 滚动背包：down=true 向下翻（看到下面的物品），否则向上翻回。 */
+    private fun scrollBackpack(inv: RegionConfig, down: Boolean, times: Int = 1) {
+        val r = inv.rect
+        val cx = r.centerX(); val cy = r.centerY()
+        val off = (r.height() / 3).coerceAtLeast(80)
+        repeat(times) {
+            if (stop) return
+            val fromY = if (down) cy + off else cy - off
+            val toY = if (down) cy - off else cy + off
+            TouchInjector.drag(cx, fromY, cx, toY, 400)
+            Thread.sleep(500)
         }
     }
 
@@ -216,16 +230,6 @@ class AutoOrganizer(
         val cellW = r.width() / region.columns
         val cellH = r.height() / region.rows
         return Rect(r.left + c.col*cellW, r.top + c.row*cellH, r.left + (c.col+1)*cellW, r.top + (c.row+1)*cellH)
-    }
-
-    /** 读取格子右下角堆叠数量（图标右下区域 OCR）。 */
-    private fun countOf(c: Cell, screen: Bitmap, region: RegionConfig): Int? {
-        val r = cellRect(c, region)
-        // 数量通常压在图标右下方，取右下半区域，避让图标本体
-        val w = r.width(); val h = r.height()
-        val rect = Rect(r.left + (w * 0.42).toInt(), r.top + (h * 0.42).toInt(), r.right, r.bottom)
-        val n = OcrReader.readCount(screen, rect)
-        return if (n != null && n in 1..9999) n else null
     }
 
     private fun matchLabel(c: Cell, templates: List<ItemTemplate>): String? {
@@ -269,7 +273,6 @@ class AutoOrganizer(
     }
 
     private fun labelOf(c: Cell) = "格${c.index + 1}"
-    private fun Touchtap(x: Int, y: Int) { TouchInjector.tap(x, y) }
 
     /** 用区域限定的原分辨率模板匹配，在背包区域 [region] 内定位模板小图中心（<5s）。 */
     private fun locateInBackpack(screen: Bitmap, tpl: ItemTemplate, region: RegionConfig): Point? {
@@ -279,6 +282,9 @@ class AutoOrganizer(
         bmp.recycle()
         return if (hit != null) Point(hit.x, hit.y) else null
     }
+
+    private fun showTargetBoxes(rects: List<Rect>) { handler.post { onTargetBoxes(rects) } }
+    private fun clearTargetBoxes() { handler.post { onTargetBoxes(null) } }
 
     private fun status(m: String) { handler.post { onStatus(m) } }
     private fun log(m: String) { handler.post { onLog(m) } }

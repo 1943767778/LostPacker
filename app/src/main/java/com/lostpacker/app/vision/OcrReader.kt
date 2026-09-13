@@ -49,6 +49,31 @@ object OcrReader {
         return holder[0]
     }
 
+    /** 识别 [region]（源图坐标）内的全部文字并拼接（用于箱子命名区等），失败返回 ""。 */
+    fun readText(bmp: Bitmap, region: Rect): String {
+        if (region.width() <= 1 || region.height() <= 1) return ""
+        val crop = try {
+            Bitmap.createBitmap(
+                bmp,
+                region.left.coerceIn(0, bmp.width - 1),
+                region.top.coerceIn(0, bmp.height - 1),
+                region.width().coerceIn(1, bmp.width - region.left.coerceIn(0, bmp.width - 1)),
+                region.height().coerceIn(1, bmp.height - region.top.coerceIn(0, bmp.height - 1))
+            )
+        } catch (e: Exception) { return "" }
+        val latch = CountDownLatch(1)
+        val holder = arrayOfNulls<String>(1)
+        recognizer.process(InputImage.fromBitmap(crop, 0))
+            .addOnSuccessListener { text ->
+                holder[0] = text.textBlocks.asSequence().map { it.text }.joinToString(" ")
+                latch.countDown()
+            }
+            .addOnFailureListener { latch.countDown() }
+        try { latch.await(4, TimeUnit.SECONDS) } catch (e: InterruptedException) {}
+        crop.recycle()
+        return holder[0] ?: ""
+    }
+
     /** 在全屏截图 [bmp] 中找到包含 [keyword] 的文字块中心点（源图坐标）；找不到返回 null。 */
     fun findText(bmp: Bitmap, keyword: String): android.graphics.Point? {
         val latch = CountDownLatch(1)
